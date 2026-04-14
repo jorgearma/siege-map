@@ -1,0 +1,27 @@
+services:
+  backend:
+    build: ./backend
+    container_name: ssh-rain-backend
+    restart: unless-stopped
+    environment:
+      - SSH_LOG_PATH=/logs/auth.log
+      - VPS_LAT=${VPS_LAT:-40.4168}
+      - VPS_LON=${VPS_LON:-3.7038}
+      - VPS_LABEL=${VPS_LABEL:-My VPS}
+      - GEO_PROVIDER=${GEO_PROVIDER:-ip-api}
+      - MAX_EVENTS=${MAX_EVENTS:-10000}
+      - GEO_CACHE_TTL=${GEO_CACHE_TTL:-86400}
+      - WS_BROADCAST_INTERVAL=${WS_BROADCAST_INTERVAL:-1.0}
+    volumes:
+      - ./logs:/logs:ro
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: ssh-rain-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend

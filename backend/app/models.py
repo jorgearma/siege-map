@@ -1,0 +1,83 @@
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from typing import Optional
+
+
+MITRE_TTPS: dict[str, dict] = {
+    "T1110.001": {"name": "Password Guessing", "tactic": "Credential Access"},
+    "T1110.003": {"name": "Password Spraying", "tactic": "Credential Access"},
+    "T1110.004": {"name": "Credential Stuffing", "tactic": "Credential Access"},
+    "T1078":     {"name": "Valid Accounts", "tactic": "Initial Access"},
+    "T1021.004": {"name": "Remote Services: SSH", "tactic": "Lateral Movement"},
+}
+
+
+@dataclass
+class GeoInfo:
+    country: str = "Unknown"
+    country_code: str = "XX"
+    city: str = "Unknown"
+    lat: float = 0.0
+    lon: float = 0.0
+    asn: str = ""
+    org: str = ""
+
+
+@dataclass
+class SSHEvent:
+    timestamp: str
+    ip: str
+    username: str
+    event_type: str
+    raw_line: str
+    id: str = ""
+    geo: Optional[GeoInfo] = None
+    attack_pattern: str = ""
+    mitre_ttps: list = field(default_factory=list)
+    source: str = "ssh"
+    http_status: int = 0
+
+    def to_dict(self) -> dict:
+        d = {
+            "id": self.id,
+            "timestamp": self.timestamp,
+            "ip": self.ip,
+            "username": self.username,
+            "event_type": self.event_type,
+            "raw_line": self.raw_line,
+            "source": self.source,
+        }
+        if self.http_status:
+            d["http_status"] = self.http_status
+        if self.geo:
+            d["geo"] = asdict(self.geo)
+        if self.attack_pattern:
+            d["attack_pattern"] = self.attack_pattern
+        if self.mitre_ttps:
+            d["mitre_ttps"] = self.mitre_ttps
+        return d
+
+
+@dataclass
+class AttackerProfile:
+    ip: str
+    total_attempts: int
+    unique_usernames: int
+    first_seen: str
+    last_seen: str
+    attack_pattern: str
+    attack_speed: str
+    requests_per_minute: float
+    mitre_ttps: list
+    usernames_attempted: list
+    geo: Optional[GeoInfo]
+    threat_score: int
+    abuse_confidence: int = 0
+    abuse_total_reports: int = 0
+    abuse_isp: str = ""
+    shodan_ports: list = field(default_factory=list)
+    shodan_os: str = ""
+    http_routes: list = field(default_factory=list)  # [{path, status, count}]
+
+    def to_dict(self) -> dict:
+        return asdict(self)
