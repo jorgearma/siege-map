@@ -7,10 +7,10 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .analyzer import analyzer
+from .anonymize import mask_ip
 from .config import settings
 from .geo import close_client, enrich_ip
 from .parser import parse_line
@@ -55,6 +55,9 @@ async def process_log_lines():
         if event is None:
             continue
 
+        if event.ip in settings.ignore_ips:
+            continue
+
         events_parsed += 1
         logger.debug(f"Parsed event: {event.event_type} from {event.ip} user={event.username}")
 
@@ -85,11 +88,8 @@ async def process_log_lines():
             )
 
 
-async def process_nginx_lines():
-    """Pipeline for nginx access log: tail → parse → enrich → store → buffer."""
-    nginx_path = settings.NGINX_LOG_PATH
-    if not nginx_path:
-        return
+async def process_nginx_lines(nginx_path: str):
+    """Pipeline for nginx access log: tail → parse → enrich → anonymize → store → buffer."""
     logger.info(f"Starting nginx ingestion from {nginx_path}")
     lines_seen = 0
     events_parsed = 0
@@ -104,11 +104,19 @@ async def process_nginx_lines():
         event = nginx_parser.parse_nginx_line(line)
         if event is None:
             continue
+        if event.ip in settings.ignore_ips:
+            continue
 
         events_parsed += 1
         try:
             event.id = str(uuid.uuid4())[:8]
+            # Geolocalizar con la IP completa (país/ciudad correctos)...
             event.geo = await enrich_ip(event.ip)
+            # ...y anonimizar ANTES de guardar: la IP completa nunca llega
+            # al store, la API, el WebSocket ni los exports.
+            if settings.MASK_HTTP_IPS:
+                event.ip = mask_ip(event.ip)
+                event.raw_line = ""  # lleva IP, user-agent y referer completos
 
             if store.add(event):
                 event_dict = event.to_dict()
@@ -150,21 +158,18 @@ async def lifespan(app: FastAPI):
     logger.info(f"Geo provider: {settings.GEO_PROVIDER}")
     logger.info(f"Threat intel enabled: {settings.THREAT_INTEL_ENABLED}")
 
-    task_ingest = asyncio.create_task(process_log_lines())
-    task_nginx = asyncio.create_task(process_nginx_lines())
-    task_flush = asyncio.create_task(flush_loop())
-    _background_tasks.add(task_ingest)
-    _background_tasks.add(task_nginx)
-    _background_tasks.add(task_flush)
-    task_ingest.add_done_callback(_background_tasks.discard)
-    task_nginx.add_done_callback(_background_tasks.discard)
-    task_flush.add_done_callback(_background_tasks.discard)
+    logger.info(f"Nginx logs: {settings.nginx_paths or 'none'} (mask HTTP IPs: {settings.MASK_HTTP_IPS})")
+
+    tasks = [asyncio.create_task(process_log_lines()), asyncio.create_task(flush_loop())]
+    tasks += [asyncio.create_task(process_nginx_lines(p)) for p in settings.nginx_paths]
+    for t in tasks:
+        _background_tasks.add(t)
+        t.add_done_callback(_background_tasks.discard)
 
     yield
 
-    task_ingest.cancel()
-    task_nginx.cancel()
-    task_flush.cancel()
+    for t in tasks:
+        t.cancel()
     await close_client()
     logger.info("Shut down complete")
 
@@ -176,12 +181,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Sin CORS: el frontend llega a /api y /ws por el mismo origen (nginx en
+# producción, proxy de Vite en desarrollo). allow_origins=["*"] permitía a
+# cualquier web leer la API desde el navegador de quien la visite.
 
 
 # ── WebSocket ──────────────────────────────────────────────────

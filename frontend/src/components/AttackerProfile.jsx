@@ -164,14 +164,21 @@ export default function AttackerProfile({ ip, onClose }) {
                     {profile.ip}
                   </span>
                 </div>
-                <div className="fo-ext-links">
-                  <a className="fo-link-btn" href={`https://www.shodan.io/host/${profile.ip}`} target="_blank" rel="noopener noreferrer">
-                    SHODAN
-                  </a>
-                  <a className="fo-link-btn" href={`https://www.abuseipdb.com/check/${profile.ip}`} target="_blank" rel="noopener noreferrer">
-                    ABUSE DB
-                  </a>
-                </div>
+                {profile.ip.includes('xxx') ? (
+                  /* IP anonimizada (visitante HTTP): sin enlaces externos */
+                  <div className="fo-ext-links">
+                    <span className="fo-link-btn">ANONYMIZED /24</span>
+                  </div>
+                ) : (
+                  <div className="fo-ext-links">
+                    <a className="fo-link-btn" href={`https://www.shodan.io/host/${profile.ip}`} target="_blank" rel="noopener noreferrer">
+                      SHODAN
+                    </a>
+                    <a className="fo-link-btn" href={`https://www.abuseipdb.com/check/${profile.ip}`} target="_blank" rel="noopener noreferrer">
+                      ABUSE DB
+                    </a>
+                  </div>
+                )}
               </div>
               {profile.geo && (
                 <div className="fo-geo-row">

@@ -125,8 +125,9 @@ VPS_LABEL=$VPS_LABEL
 GEO_PROVIDER=ip-api
 IPINFO_TOKEN=
 
-# Frontend port (change if 3000 is in use)
-FRONTEND_PORT=3000
+# Frontend: localhost only (put a reverse proxy / Cloudflare Tunnel in front)
+BIND_ADDR=127.0.0.1
+FRONTEND_PORT=8082
 
 # Backend settings
 MAX_EVENTS=10000
@@ -152,8 +153,8 @@ deploy_app() {
 
     print_success "SSH Bot Rain Map is now running!"
     echo ""
-    echo "🌐 Access your dashboard at: http://$(hostname -I | awk '{print $1}'):3000"
-    echo "   (or http://localhost:3000 if accessing locally)"
+    echo "🌐 Dashboard listening on http://127.0.0.1:8082 (localhost only)"
+    echo "   Publish it with a reverse proxy or Cloudflare Tunnel — Docker bypasses ufw"
     echo ""
     echo "🔍 Check logs with: $COMPOSE_CMD logs -f"
     echo "🛑 Stop with: $COMPOSE_CMD down"

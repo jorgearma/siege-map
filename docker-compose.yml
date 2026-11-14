@@ -4,13 +4,23 @@ services:
     container_name: ssh-rain-backend
     restart: unless-stopped
     env_file: .env
+    # Hardening: non-root user (Dockerfile) + only what it needs to read logs
+    user: "10001"
+    group_add:
+      - "${LOG_GID:-4}"   # host "adm" group → read auth.log (root/syslog:adm 640) without root
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
     volumes:
       # Mount the host SSH log file (read-only)
       - ${SSH_LOG_PATH:-/var/log/auth.log}:${SSH_LOG_PATH:-/var/log/auth.log}:ro
-      # Mount the nginx log directory (so tail -F survives logrotate)
-      - /var/log/nginx:/var/log/nginx:ro
-    ports:
-      - "8000:8000"
+      # Mount the nginx log directory (so tail -F survives logrotate).
+      # Behind a Cloudflare Tunnel with a containerised site, point NGINX_LOG_DIR
+      # to the host folder where that container writes its access.log.
+      - ${NGINX_LOG_DIR:-/var/log/nginx}:/var/log/nginx:ro
+    # No published ports: only the frontend nginx talks to the backend,
+    # over the internal Docker network (http://backend:8000).
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 30s
@@ -21,7 +31,14 @@ services:
     build: ./frontend
     container_name: ssh-rain-frontend
     restart: unless-stopped
+    # Hardening: nginx-unprivileged (uid 101), no capabilities, read-only FS
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]   # nginx-unprivileged keeps pid + cache in /tmp
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      # Docker bypasses ufw: bind to localhost by default.
+      # A reverse proxy / Cloudflare Tunnel publishes it (BIND_ADDR=0.0.0.0 to expose directly).
+      - "${BIND_ADDR:-127.0.0.1}:${FRONTEND_PORT:-8082}:3000"
     depends_on:
       - backend

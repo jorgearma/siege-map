@@ -8,8 +8,9 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-# Production: serve with nginx
-FROM nginx:alpine
+# Production: serve with nginx WITHOUT root (official image, runs as uid 101).
+# Port 3000 > 1024 → no privileges needed to bind it.
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 
 # Custom nginx config for SPA + proxy
 COPY --from=build /app/dist /usr/share/nginx/html

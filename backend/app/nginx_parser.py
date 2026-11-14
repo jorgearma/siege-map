@@ -1,3 +1,4 @@
+import ipaddress
 import re
 from datetime import datetime
 from typing import Optional
@@ -5,7 +6,8 @@ from .models import SSHEvent
 
 # Nginx combined log format
 NGINX_LOG_RE = re.compile(
-    r'(?P<ip>\d{1,3}(?:\.\d{1,3}){3}) - - \[(?P<timestamp>[^\]]+)\] '
+    # IPv4 o IPv6 (Cloudflare pasa la IPv6 del visitante en CF-Connecting-IP)
+    r'(?P<ip>[0-9A-Fa-f:.]+) - \S+ \[(?P<timestamp>[^\]]+)\] '
     r'"(?P<request>[^"]*)" (?P<status>\d{3}) \d+ '
     r'"[^"]*" "(?P<ua>[^"]*)"'
 )
@@ -46,10 +48,6 @@ AUTO_UA_FRAGMENTS = [
 STATIC_EXTENSIONS = re.compile(
     r'\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|map|webp|avif)(\?|$)',
     re.I
-)
-
-PRIVATE_RE = re.compile(
-    r'^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.)'
 )
 
 # Mobile/tablet detection
@@ -96,7 +94,11 @@ def parse_nginx_line(line: str) -> Optional[SSHEvent]:
         return None
 
     ip = m.group('ip')
-    if PRIVATE_RE.match(ip):
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    if not addr.is_global:  # privadas, loopback, link-local, reservadas (v4 y v6)
         return None
 
     request = m.group('request')

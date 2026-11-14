@@ -70,7 +70,7 @@ docker compose up -d --build
 ```
 
 Luego abre:
-- Dashboard: `http://localhost:3000` (o `http://<tu-vps-ip>:3000`)
+- Dashboard: `http://127.0.0.1:8082` (solo localhost; publícalo con un reverse proxy o Cloudflare Tunnel)
 - API: `http://localhost:8000/api/health`
 
 ### Modo desarrollo (con logs sinteticos)
@@ -107,7 +107,7 @@ Todo lo que probablemente quieras tocar.
 | `GEO_CACHE_TTL` | `86400` | TTL del cache de geo en segundos (24h por defecto). |
 | `ABUSE_CACHE_TTL` | `86400` | TTL del cache de AbuseIPDB. |
 | `WS_BROADCAST_INTERVAL` | `1.0` | Cadencia de envio por WebSocket en segundos. Sube a `2.0` si tu CPU sufre. |
-| `FRONTEND_PORT` | `3000` | Puerto del dashboard. Cambialo si ya tienes algo en 3000. |
+| `FRONTEND_PORT` | `8082` | Puerto del dashboard (en `127.0.0.1`). Cambialo si ya está en uso. |
 | `BACKEND_PORT` | `8000` | Puerto del backend FastAPI. |
 
 ### 2. Rutas HTTP "legitimas" de tu app
