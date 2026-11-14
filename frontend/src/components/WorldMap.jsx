@@ -2,6 +2,14 @@ import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 
+// CARTO basemaps require an API key (passed as ?key=). It is embedded in the JS at
+// build time (VITE_CARTO_KEY) and therefore public: restrict it to your domain in
+// the CARTO dashboard — that restriction is what protects it, not hiding it.
+const CARTO_KEY = import.meta.env.VITE_CARTO_KEY
+const CARTO_TILES =
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' +
+  (CARTO_KEY ? `?key=${encodeURIComponent(CARTO_KEY)}` : '')
+
 // Fix default marker icon
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -774,7 +782,7 @@ export default function WorldMap({ events, initialIds, config, onIpClick }) {
     >
       <TileLayer
         attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        url={CARTO_TILES}
       />
 
       {config && (

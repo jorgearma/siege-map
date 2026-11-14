@@ -6,6 +6,9 @@ COPY package.json ./
 RUN npm install
 
 COPY . .
+# Map tiles key: Vite embeds VITE_* variables into the JS during the build
+ARG VITE_CARTO_KEY=""
+ENV VITE_CARTO_KEY=$VITE_CARTO_KEY
 RUN npm run build
 
 # Production: serve with nginx WITHOUT root (official image, runs as uid 101).

@@ -35,7 +35,11 @@ services:
       retries: 3
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # Public by design (goes into the browser JS) — restrict it to your domain in CARTO
+        VITE_CARTO_KEY: ${CARTO_API_KEY:-}
     container_name: ssh-rain-frontend
     restart: unless-stopped
     # Hardening: nginx-unprivileged (uid 101), no capabilities, read-only FS
