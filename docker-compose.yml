@@ -12,6 +12,13 @@ services:
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]
+    mem_limit: 256m
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       # Mount the host SSH log file (read-only)
       - ${SSH_LOG_PATH:-/var/log/auth.log}:${SSH_LOG_PATH:-/var/log/auth.log}:ro
@@ -36,6 +43,13 @@ services:
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]   # nginx-unprivileged keeps pid + cache in /tmp
+    mem_limit: 64m
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       # Docker bypasses ufw: bind to localhost by default.
       # A reverse proxy / Cloudflare Tunnel publishes it (BIND_ADDR=0.0.0.0 to expose directly).
