@@ -252,6 +252,50 @@ export default function AttackerProfile({ ip, onClose }) {
               </div>
             </div>
 
+            {/* ── LONG-TERM RECORD (SQLite) ── */}
+            {(profile.days_active > 0 || profile.tags?.length > 0 || profile.greynoise) && (
+              <div className="fo-frame">
+                <div className="fo-frame-label">LONG-TERM RECORD</div>
+                <div className="fo-record">
+                  {profile.days_active > 0 && (
+                    <div><span>ACTIVE DAYS</span><b>{profile.days_active}</b></div>
+                  )}
+                  {profile.first_seen_ever && (
+                    <div><span>FIRST SEEN</span><b>{profile.first_seen_ever.slice(0, 10)}</b></div>
+                  )}
+                  {profile.auth_attempts > 0 && (
+                    <div><span>LOGIN ATTEMPTS</span><b>{profile.auth_attempts.toLocaleString()}</b></div>
+                  )}
+                  {profile.net_type && profile.net_type !== 'unknown' && (
+                    <div><span>NETWORK</span><b>{profile.net_type.toUpperCase()}</b></div>
+                  )}
+                </div>
+                {profile.tags?.length > 0 && (
+                  <div className="fo-badges">
+                    {profile.tags.map((t) => (
+                      <span key={t} className={`fo-badge${t === 'tor-exit' ? ' fo-badge--danger' : ''}`}>
+                        {t.toUpperCase()}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {profile.campaign_size > 1 && (
+                  <p className="fo-record-note">
+                    Part of a botnet of <b>{profile.campaign_size}</b> addresses running the same
+                    wordlist ({profile.campaign_usernames}…)
+                  </p>
+                )}
+                {profile.greynoise && (
+                  <p className="fo-record-note">
+                    GreyNoise: <b>{profile.greynoise.classification || 'unknown'}</b>
+                    {profile.greynoise.name && profile.greynoise.name !== 'unknown' ? ` · ${profile.greynoise.name}` : ''}
+                    {profile.greynoise.noise ? ' · mass internet scanner' : ''}
+                    {profile.greynoise.riot ? ' · known benign service' : ''}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* ── MITRE ATT&CK ── */}
             {profile.mitre_ttps?.length > 0 && (
               <div className="fo-frame">

@@ -12,3 +12,9 @@ __pycache__/
 *.pyc
 .env
 backend/venv/
+geoip/
+*.mmdb
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/

@@ -17,6 +17,12 @@ COPY app/ ./app/
 
 # Usuario sin privilegios, UID fijo, sin home ni shell
 RUN useradd --system --no-create-home --uid 10001 --shell /usr/sbin/nologin app
+
+# /data: único sitio donde el contenedor puede escribir (SQLite). Un volumen
+# con nombre hereda este dueño la primera vez que se crea, así que el
+# usuario app puede escribir sin ser root ni tocar permisos en el host.
+RUN mkdir -p /data /geoip && chown app /data
+VOLUME /data
 USER app
 
 EXPOSE 8000

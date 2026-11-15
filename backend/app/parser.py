@@ -1,3 +1,4 @@
+import ipaddress
 import re
 from datetime import datetime
 from typing import Optional
@@ -8,81 +9,96 @@ from .models import SSHEvent
 #   Systemd/Ubuntu 24.04: 2026-04-13T19:18:25.691118+02:00
 _TS = r"(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\d.+:Z-]*|\w{3}\s+\d+\s+\d+:\d+:\d+)"
 
-# Patterns for SSH bot activity
+# OpenSSH >= 9.8 splits the daemon: lines come from "sshd-session[pid]"
+# (and "sshd-auth[pid]" in 10.x) instead of "sshd[pid]".
+_PROC = r"\s+\S+\s+sshd(?:-session|-auth)?\[\d+\]:\s+"
+
+# IPv4 or IPv6 — validated afterwards with ipaddress
+_IP = r"(?P<ip>[0-9A-Fa-f:.]+)"
+
+_USER_PREFIX = r"(?:(?:invalid|authenticating) user (?P<username>\S+)\s+)?"
+
+# Patterns for SSH bot activity (order matters — first match wins)
 PATTERNS = [
     {
-        "name": "failed_password",
         "regex": re.compile(
-            _TS + r"\s+\S+\s+sshd\[\d+\]:\s+"
-            r"Failed password for (?:invalid user )?(?P<username>\S+)\s+from\s+(?P<ip>\d+\.\d+\.\d+\.\d+)"
+            _TS + _PROC
+            + r"Failed password for (?:invalid user )?(?P<username>\S+)\s+from\s+" + _IP
         ),
         "event_type": "failed_password",
     },
     {
-        "name": "invalid_user",
         "regex": re.compile(
-            _TS + r"\s+\S+\s+sshd\[\d+\]:\s+"
-            r"Invalid user (?P<username>\S+)\s+from\s+(?P<ip>\d+\.\d+\.\d+\.\d+)"
+            _TS + _PROC + r"Invalid user (?P<username>\S+)\s+from\s+" + _IP
         ),
         "event_type": "invalid_user",
     },
     {
-        "name": "connection_closed_preauth",
         "regex": re.compile(
-            _TS + r"\s+\S+\s+sshd\[\d+\]:\s+"
-            r"Connection closed by (?:authenticating user (?P<username>\S+)\s+)?(?P<ip>\d+\.\d+\.\d+\.\d+)"
+            _TS + _PROC + r"Connection closed by " + _USER_PREFIX + _IP + r"\s+port"
         ),
         "event_type": "connection_closed",
     },
     {
-        "name": "disconnected_preauth",
         "regex": re.compile(
-            _TS + r"\s+\S+\s+sshd\[\d+\]:\s+"
-            r"Disconnected from (?:authenticating user (?P<username>\S+)\s+)?(?P<ip>\d+\.\d+\.\d+\.\d+)"
+            _TS + _PROC + r"Disconnected from " + _USER_PREFIX + _IP + r"\s+port"
         ),
         "event_type": "disconnected",
     },
     {
-        "name": "max_auth_exceeded",
         "regex": re.compile(
-            _TS + r"\s+\S+\s+sshd\[\d+\]:\s+"
-            r"error: maximum authentication attempts exceeded for (?:invalid user )?(?P<username>\S+)\s+from\s+(?P<ip>\d+\.\d+\.\d+\.\d+)"
+            _TS + _PROC
+            + r"error: maximum authentication attempts exceeded for (?:invalid user )?(?P<username>\S+)\s+from\s+" + _IP
         ),
         "event_type": "max_auth_exceeded",
     },
     {
-        "name": "received_disconnect",
         "regex": re.compile(
-            _TS + r"\s+\S+\s+sshd\[\d+\]:\s+"
-            r"Received disconnect from (?P<ip>\d+\.\d+\.\d+\.\d+).*?(?:\[preauth\])"
+            _TS + _PROC + r"Received disconnect from " + _IP + r".*?(?:\[preauth\])"
         ),
         "event_type": "received_disconnect",
     },
     {
-        "name": "bad_protocol",
+        # What the client sent instead of an SSH banner (HTTP requests, RDP, TLS...)
         "regex": re.compile(
-            _TS + r"\s+\S+\s+sshd\[\d+\]:\s+"
-            r"Bad protocol version identification.*from\s+(?P<ip>\d+\.\d+\.\d+\.\d+)"
+            _TS + _PROC
+            + r"Bad protocol version identification (?:'(?P<banner>.*)' )?.*?from\s+" + _IP
         ),
         "event_type": "bad_protocol",
     },
-]
-
-# IPv4 regex for extracting IPs when no pattern matches specifically
-IP_REGEX = re.compile(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")
-
-# Private/reserved IP ranges to skip
-PRIVATE_RANGES = [
-    re.compile(r"^10\."),
-    re.compile(r"^172\.(1[6-9]|2\d|3[01])\."),
-    re.compile(r"^192\.168\."),
-    re.compile(r"^127\."),
-    re.compile(r"^0\."),
+    {
+        # OpenSSH >= 8.x wording of the same thing
+        "regex": re.compile(
+            _TS + _PROC
+            + r"(?:error: kex_exchange_identification: |banner exchange: )"
+            r"Connection from " + _IP + r" port \d+: (?P<banner>.*)"
+        ),
+        "event_type": "bad_protocol",
+    },
+    {
+        # Legacy clients/bots: reveals which algorithms the tool offers
+        "regex": re.compile(
+            _TS + _PROC
+            + r"Unable to negotiate with " + _IP + r" port \d+: no matching (?P<kex_kind>[\w ]+?) found\."
+            r"(?: Their offer: (?P<kex>\S+))?"
+        ),
+        "event_type": "kex_mismatch",
+    },
+    {
+        "regex": re.compile(
+            _TS + _PROC + r"Did not receive identification string from " + _IP
+        ),
+        "event_type": "no_banner",
+    },
 ]
 
 
 def is_private_ip(ip: str) -> bool:
-    return any(r.match(ip) for r in PRIVATE_RANGES)
+    """True for anything that is not a routable public address (v4 or v6)."""
+    try:
+        return not ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return True
 
 
 def normalize_timestamp(raw_ts: str) -> str:
@@ -91,7 +107,8 @@ def normalize_timestamp(raw_ts: str) -> str:
     # Systemd format: 2026-04-13T19:18:25.691118+02:00
     if raw_ts and raw_ts[0].isdigit():
         try:
-            return datetime.fromisoformat(raw_ts).isoformat()
+            # Naive local time: every other timestamp in the app is naive
+            return datetime.fromisoformat(raw_ts).replace(tzinfo=None).isoformat()
         except ValueError:
             pass
     # Classic syslog format: Apr 13 19:18:25
@@ -103,6 +120,11 @@ def normalize_timestamp(raw_ts: str) -> str:
         return parsed.isoformat()
     except ValueError:
         return now.isoformat()
+
+
+def _clean(text: str, limit: int = 60) -> str:
+    """Printable, bounded version of attacker-controlled text."""
+    return "".join(c if 32 <= ord(c) < 127 else "?" for c in text)[:limit]
 
 
 def parse_line(line: str) -> Optional[SSHEvent]:
@@ -118,19 +140,28 @@ def parse_line(line: str) -> Optional[SSHEvent]:
         match = pattern["regex"].search(line)
         if match:
             groups = match.groupdict()
-            ip = groups.get("ip", "")
+            ip = (groups.get("ip") or "").rstrip(".:")
             if not ip or is_private_ip(ip):
                 return None
 
-            username = groups.get("username", "")
+            username = groups.get("username") or ""
             timestamp = normalize_timestamp(groups.get("timestamp", ""))
+
+            meta = {}
+            if groups.get("banner"):
+                meta["banner"] = _clean(groups["banner"])
+            if groups.get("kex"):
+                meta["kex"] = _clean(groups["kex"], 120)
+            if groups.get("kex_kind"):
+                meta["kex_kind"] = _clean(groups["kex_kind"], 40)
 
             return SSHEvent(
                 timestamp=timestamp,
                 ip=ip,
-                username=username or "(none)",
+                username=_clean(username, 64) or "(none)",
                 event_type=pattern["event_type"],
                 raw_line=line,
+                meta=meta,
             )
 
     return None

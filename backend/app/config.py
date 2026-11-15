@@ -25,6 +25,33 @@ class Settings:
     SHODAN_API_KEY: str = os.getenv("SHODAN_API_KEY", "")
     ABUSE_CACHE_TTL: int = int(os.getenv("ABUSE_CACHE_TTL", "86400"))
 
+    # ── Persistence (SQLite) ──────────────────────────────────
+    # Aggregated counters + a rolling window of events. If the path is not
+    # writable the backend falls back to an in-memory DB (nothing survives).
+    DB_PATH: str = os.getenv("DB_PATH", "/data/siege.db")
+    # Days of individual events kept (time-lapse, sankey, restart recovery).
+    # Daily aggregates are kept forever.
+    EVENT_RETENTION_DAYS: int = int(os.getenv("EVENT_RETENTION_DAYS", "7"))
+    DB_FLUSH_INTERVAL: float = float(os.getenv("DB_FLUSH_INTERVAL", "5"))
+
+    # ── Local GeoIP (GEO_PROVIDER=mmdb) ───────────────────────
+    # MaxMind GeoLite2 or DB-IP lite .mmdb files (see scripts/fetch_geoip.sh)
+    GEOIP_CITY_DB: str = os.getenv("GEOIP_CITY_DB", "/geoip/city.mmdb")
+    GEOIP_ASN_DB: str = os.getenv("GEOIP_ASN_DB", "/geoip/asn.mmdb")
+
+    # ── Extra tagging ─────────────────────────────────────────
+    # Download the public Tor exit-node list once a day
+    TOR_EXIT_LIST: bool = os.getenv("TOR_EXIT_LIST", "true").lower() == "true"
+    # GreyNoise community API (optional, only queried when a dossier is opened)
+    GREYNOISE_API_KEY: str = os.getenv("GREYNOISE_API_KEY", "")
+    GREYNOISE_DAILY_LIMIT: int = int(os.getenv("GREYNOISE_DAILY_LIMIT", "40"))
+    # Your own hostnames: referrers from them count as "internal"
+    OWN_DOMAINS: str = os.getenv("OWN_DOMAINS", "")
+    # Usernames tried in order that identify a wordlist (campaign fingerprint)
+    CAMPAIGN_PREFIX_LEN: int = int(os.getenv("CAMPAIGN_PREFIX_LEN", "4"))
+    # Public link shown on the landing screen
+    REPO_URL: str = os.getenv("REPO_URL", "https://github.com/jorgearma/siege-map")
+
     @property
     def THREAT_INTEL_ENABLED(self) -> bool:
         return bool(self.ABUSEIPDB_API_KEY)
@@ -37,6 +64,10 @@ class Settings:
     @property
     def ignore_ips(self) -> set[str]:
         return {ip.strip() for ip in self.IGNORE_IPS.split(",") if ip.strip()}
+
+    @property
+    def own_domains(self) -> set[str]:
+        return {d.strip().lower() for d in self.OWN_DOMAINS.split(",") if d.strip()}
 
     @property
     def log_path(self) -> Path:

@@ -1,8 +1,8 @@
-import time
-from collections import deque, Counter
+from collections import deque, Counter, OrderedDict
 from typing import Optional
 from .models import SSHEvent
 from .config import settings
+from .usernames import categorize
 
 
 class EventStore:
@@ -11,20 +11,37 @@ class EventStore:
     def __init__(self, max_events: int = None):
         self.max_events = max_events or settings.MAX_EVENTS
         self.events: deque[SSHEvent] = deque(maxlen=self.max_events)
-        self._seen: deque[str] = deque(maxlen=5000)  # dedup window
+        # dedup window: key -> the event that represents it
+        self._seen: OrderedDict[str, SSHEvent] = OrderedDict()
         self._total_count = 0
 
-    def add(self, event: SSHEvent) -> bool:
-        """Add event, returns False if duplicate."""
-        # Simple dedup: same IP + username + event_type within a short window
-        dedup_key = f"{event.ip}:{event.username}:{event.event_type}:{event.timestamp[:16]}"
-        if dedup_key in self._seen:
-            return False
+    def add(self, event: SSHEvent) -> tuple[SSHEvent, bool]:
+        """
+        Store one log line. Returns (stored_event, is_new).
 
-        self._seen.append(dedup_key)
-        self.events.append(event)
+        Lines with the same IP + username + type within the same minute are
+        MERGED into the first one (its `count` / `attempts` grow) instead of
+        being dropped: the live feed shows one row, the numbers stay true.
+        """
         self._total_count += 1
-        return True
+        dedup_key = f"{event.ip}:{event.username}:{event.event_type}:{event.timestamp[:16]}"
+        existing = self._seen.get(dedup_key)
+        if existing is not None:
+            existing.count += 1
+            existing.attempts += event.attempts
+            return existing, False
+
+        self._seen[dedup_key] = event
+        if len(self._seen) > 5000:
+            self._seen.popitem(last=False)
+        self.events.append(event)
+        return event, True
+
+    def restore(self, events: list[SSHEvent], total: int = 0) -> None:
+        """Refill from the database after a restart."""
+        for e in events:
+            self.events.append(e)
+        self._total_count = max(total, sum(e.count for e in events))
 
     def _filter_by_window(self, seconds: Optional[int] = None) -> list[SSHEvent]:
         if seconds is None:
@@ -46,7 +63,7 @@ class EventStore:
         counter = Counter()
         for e in events:
             if e.geo:
-                counter[e.geo.country] += 1
+                counter[e.geo.country] += e.count
         return [{"country": k, "count": v} for k, v in counter.most_common(limit)]
 
     def top_ips(self, limit: int = 10, window: Optional[int] = None, source: Optional[str] = None) -> list[dict]:
@@ -57,13 +74,22 @@ class EventStore:
             events = [e for e in events if e.source == "http" and not e.event_type.startswith("visit_")]
         elif source == "visits":
             events = [e for e in events if e.event_type.startswith("visit_")]
-        counter = Counter(e.ip for e in events)
+        counter = Counter()
+        for e in events:
+            counter[e.ip] += e.count
         return [{"ip": k, "count": v} for k, v in counter.most_common(limit)]
 
     def top_usernames(self, limit: int = 10, window: Optional[int] = None) -> list[dict]:
+        """SSH usernames only, ranked by real authentication attempts."""
         events = self._filter_by_window(window)
-        counter = Counter(e.username for e in events)
-        return [{"username": k, "count": v} for k, v in counter.most_common(limit)]
+        counter = Counter()
+        for e in events:
+            if e.source == "ssh" and e.attempts and e.username != "(none)":
+                counter[e.username] += e.attempts
+        return [
+            {"username": k, "count": v, "category": categorize(k)}
+            for k, v in counter.most_common(limit)
+        ]
 
     def top_http_routes(self, limit: int = 10, window: Optional[int] = None) -> list[dict]:
         from collections import defaultdict
@@ -71,7 +97,7 @@ class EventStore:
         http_events = [e for e in events if e.source == "http"]
         routes: dict[str, dict] = defaultdict(lambda: {"count": 0, "statuses": Counter()})
         for e in http_events:
-            routes[e.username]["count"] += 1
+            routes[e.username]["count"] += e.count
             if e.http_status:
                 routes[e.username]["statuses"][e.http_status] += 1
         result = []
@@ -90,7 +116,7 @@ class EventStore:
         for e in events:
             # Group by minute
             minute_key = e.timestamp[:16]  # "2024-01-15T14:30"
-            counter[minute_key] += 1
+            counter[minute_key] += e.count
 
         sorted_minutes = sorted(counter.items())[-60:]  # last 60 minutes max
         return [{"minute": k, "count": v} for k, v in sorted_minutes]
@@ -98,7 +124,7 @@ class EventStore:
     def total_count(self, window: Optional[int] = None) -> int:
         if window is None:
             return self._total_count
-        return len(self._filter_by_window(window))
+        return sum(e.count for e in self._filter_by_window(window))
 
     def events_for_ip(self, ip: str, window: Optional[int] = None) -> list[SSHEvent]:
         return [e for e in self._filter_by_window(window) if e.ip == ip]

@@ -179,9 +179,9 @@ def build_report(window: Optional[int] = None) -> dict:
         "sensor": settings.VPS_LABEL,
         "window_seconds": window,
         "summary": {
-            "total_events": len(events),
+            "total_events": sum(e.count for e in events),
             "unique_ips": len({e.ip for e in events}),
-            "unique_usernames": len({e.username for e in events}),
+            "unique_usernames": len({e.username for e in events if e.source == "ssh" and e.username != "(none)"}),
             "high_threat_ips": len(high_threat),
         },
         "attack_patterns": patterns,

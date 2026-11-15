@@ -1,0 +1,30 @@
+title: SSH Client Offering Only Legacy Key Exchange Algorithms
+id: 3f9b2d18-6c4a-4e7b-b0a2-7c1d9e5f8a63
+status: experimental
+description: |
+  sshd refused a connection because the client only offered key exchange
+  methods the server no longer accepts (for example diffie-hellman-group1-sha1).
+  Up-to-date clients do not behave like this: it is typical of old scanning
+  tools, embedded botnet malware and IoT devices.
+references:
+  - https://www.openssh.com/legacy.html
+  - https://github.com/jorgearma/siege-map
+author: Jorge Escobar (siege-map)
+date: 2026-11-15
+tags:
+  - attack.reconnaissance
+  - attack.t1595.002
+logsource:
+  product: linux
+  service: sshd
+detection:
+  selection:
+    - 'Unable to negotiate with'
+  legacy:
+    - 'diffie-hellman-group1-sha1'
+    - 'diffie-hellman-group-exchange-sha1'
+    - 'ssh-dss'
+  condition: selection and legacy
+falsepositives:
+  - Legitimate legacy network equipment or old backup software connecting to the host
+level: low

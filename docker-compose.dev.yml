@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     environment:
       - SSH_LOG_PATH=/logs/auth.log
+      # scripts/fake_nginx_log.py --output ./logs/access.log
+      - NGINX_LOG_PATHS=/logs/access.log
       - VPS_LAT=${VPS_LAT:-40.4168}
       - VPS_LON=${VPS_LON:-3.7038}
       - VPS_LABEL=${VPS_LABEL:-My VPS}
@@ -22,6 +24,7 @@ services:
     tmpfs: [/tmp]
     volumes:
       - ./logs:/logs:ro
+      - siege-data-dev:/data
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -42,3 +45,6 @@ services:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     depends_on:
       - backend
+
+volumes:
+  siege-data-dev:

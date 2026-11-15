@@ -26,6 +26,11 @@ services:
       # Behind a Cloudflare Tunnel with a containerised site, point NGINX_LOG_DIR
       # to the host folder where that container writes its access.log.
       - ${NGINX_LOG_DIR:-/var/log/nginx}:/var/log/nginx:ro
+      # SQLite: the only writable path (the root filesystem stays read-only).
+      # Holds daily aggregates forever and EVENT_RETENTION_DAYS of events.
+      - siege-data:/data
+      # Optional local GeoIP databases (GEO_PROVIDER=mmdb, scripts/fetch_geoip.sh)
+      - ${GEOIP_DIR:-./geoip}:/geoip:ro
     # No published ports: only the frontend nginx talks to the backend,
     # over the internal Docker network (http://backend:8000).
     healthcheck:
@@ -60,3 +65,6 @@ services:
       - "${BIND_ADDR:-127.0.0.1}:${FRONTEND_PORT:-8082}:3000"
     depends_on:
       - backend
+
+volumes:
+  siege-data:

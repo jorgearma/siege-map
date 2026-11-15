@@ -114,14 +114,41 @@ for t in TEMPLATES:
     WEIGHTED_TEMPLATES.extend([t["format"]] * t["weight"])
 
 
+# Botnets: several IPs walking the SAME wordlist in the SAME order.
+# This is what the campaign detector (db.py) groups together.
+CAMPAIGNS = [
+    {"ips": ATTACKER_IPS[0:5],   "words": ["root", "admin", "ubuntu", "test", "oracle", "postgres", "git", "deploy"]},
+    {"ips": ATTACKER_IPS[8:12],  "words": ["solana", "sol", "validator", "node", "ethereum", "miner"]},
+    {"ips": ATTACKER_IPS[20:23], "words": ["pi", "ubnt", "raspberry", "openwrt", "dietpi"]},
+]
+_campaign_pos: dict[str, int] = {}
+_CAMPAIGN_IPS = {ip for c in CAMPAIGNS for ip in c["ips"]}
+# Addresses that behave randomly (one wordlist per botnet member otherwise)
+RANDOM_IPS = [ip for ip in ATTACKER_IPS if ip not in _CAMPAIGN_IPS]
+
+
+def campaign_line(ts: str) -> str:
+    c = random.choice(CAMPAIGNS)
+    ip = random.choice(c["ips"])
+    pos = _campaign_pos.get(ip, 0)
+    _campaign_pos[ip] = pos + 1
+    user = c["words"][pos % len(c["words"])]
+    return (
+        f"{ts} myserver sshd[{random.randint(1000, 65000)}]: Failed password for invalid user "
+        f"{user} from {ip} port {random.randint(30000, 65535)} ssh2"
+    )
+
+
 def generate_line() -> str:
     ts = datetime.now().strftime("%b %d %H:%M:%S")
+    if random.random() < 0.3:
+        return campaign_line(ts)
     template = random.choice(WEIGHTED_TEMPLATES)
     return template.format(
         ts=ts,
         pid=random.randint(1000, 65000),
         user=random.choice(USERNAMES),
-        ip=random.choice(ATTACKER_IPS),
+        ip=random.choice(RANDOM_IPS),
         port=random.randint(30000, 65535),
     )
 
@@ -154,7 +181,7 @@ def main():
                 # Generate one or more lines
                 if args.burst and random.random() < 0.05:
                     # Burst: 5-20 events from the same IP rapidly
-                    burst_ip = random.choice(ATTACKER_IPS)
+                    burst_ip = random.choice(RANDOM_IPS)
                     burst_user = random.choice(USERNAMES)
                     burst_count = random.randint(5, 20)
                     for _ in range(burst_count):

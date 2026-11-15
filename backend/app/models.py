@@ -21,6 +21,10 @@ class GeoInfo:
     lon: float = 0.0
     asn: str = ""
     org: str = ""
+    # hosting | mobile | proxy | residential | unknown
+    net_type: str = "unknown"
+    # Cloud/hosting brand derived from the ASN name ("AWS", "DigitalOcean"...)
+    cloud: str = ""
 
 
 @dataclass
@@ -36,6 +40,13 @@ class SSHEvent:
     mitre_ttps: list = field(default_factory=list)
     source: str = "ssh"
     http_status: int = 0
+    # Log lines merged into this event (same ip/user/type within a minute)
+    count: int = 1
+    # Real authentication attempts represented (SSH only, see attempts.py)
+    attempts: int = 0
+    # Extra telemetry: device/os/browser/lang/ref/visitor/sig (HTTP),
+    # banner/kex (SSH), tags
+    meta: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = {
@@ -55,6 +66,8 @@ class SSHEvent:
             d["attack_pattern"] = self.attack_pattern
         if self.mitre_ttps:
             d["mitre_ttps"] = self.mitre_ttps
+        if self.meta:
+            d["meta"] = self.meta
         return d
 
 
@@ -78,6 +91,14 @@ class AttackerProfile:
     shodan_ports: list = field(default_factory=list)
     shodan_os: str = ""
     http_routes: list = field(default_factory=list)  # [{path, status, count}]
+    # Long-term data from SQLite (survives restarts)
+    net_type: str = ""
+    cloud: str = ""
+    tags: list = field(default_factory=list)
+    days_active: int = 0
+    first_seen_ever: str = ""
+    campaign: str = ""
+    campaign_size: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)

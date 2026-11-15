@@ -1,0 +1,52 @@
+title: SSH Login Attempts For Many Different Users From One Source
+id: 6a1f0c52-3b7e-4c1e-9a55-0d2f4b8e7a11
+status: experimental
+description: |
+  Detects a single source address trying to authenticate over SSH with many
+  different usernames in a short time. This is the "dictionary attack" pattern
+  siege-map sees most often: one bot walking a wordlist of account names.
+references:
+  - https://attack.mitre.org/techniques/T1110/001/
+  - https://github.com/jorgearma/siege-map
+author: Jorge Escobar (siege-map)
+date: 2026-11-15
+tags:
+  - attack.credential-access
+  - attack.t1110.001
+  - attack.t1021.004
+logsource:
+  product: linux
+  service: sshd
+detection:
+  selection:
+    - 'Invalid user'
+    - 'Failed password for invalid user'
+  condition: selection
+  # Correlation is expressed in the rule below (Sigma correlations, v2 spec)
+falsepositives:
+  - Misconfigured automation rotating through service accounts
+  - Internal vulnerability scanners
+level: low
+---
+title: SSH Username Dictionary Attack
+id: 0c7d5a3e-91b4-4f0a-8d1c-5e2a7b9f3c44
+status: experimental
+description: More than 5 distinct usernames from the same source in 10 minutes.
+author: Jorge Escobar (siege-map)
+date: 2026-11-15
+correlation:
+  type: value_count
+  rules:
+    - 6a1f0c52-3b7e-4c1e-9a55-0d2f4b8e7a11
+  group-by:
+    - src_ip
+  timespan: 10m
+  condition:
+    field: user
+    gt: 5
+tags:
+  - attack.credential-access
+  - attack.t1110.001
+falsepositives:
+  - See base rule
+level: medium

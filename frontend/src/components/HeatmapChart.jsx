@@ -3,12 +3,12 @@ import React, { useEffect, useState, useRef } from 'react'
 const DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 
-export default function HeatmapChart({ window: timeWindow }) {
+export default function HeatmapChart({ window: timeWindow, range }) {
   const [grid, setGrid] = useState(null)
   const intervalRef = useRef(null)
 
   useEffect(() => {
-    const qs = timeWindow ? `?window=${timeWindow}` : ''
+    const qs = timeWindow ? `?window=${timeWindow}` : range ? `?range=${range}` : ''
     let active = true
 
     async function load() {
@@ -29,7 +29,7 @@ export default function HeatmapChart({ window: timeWindow }) {
       active = false
       clearInterval(intervalRef.current)
     }
-  }, [timeWindow])
+  }, [timeWindow, range])
 
   if (!grid) {
     return (

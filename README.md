@@ -96,6 +96,10 @@ Todo lo que probablemente quieras tocar.
 |----------|---------|------------------------|
 | `SSH_LOG_PATH` | `/var/log/auth.log` | **Obligatorio**. Debian/Ubuntu usa `auth.log`, RHEL/CentOS/Fedora usa `/var/log/secure`. |
 | `NGINX_LOG_PATH` | `/var/log/nginx/access.log` | Opcional. Si no usas Nginx dejalo vacio o apunta a tu access log (Apache funciona si esta en formato combined). |
+| `NGINX_LOG_PATHS` | _(vacio)_ | Varios access logs separados por coma (rutas **dentro** del contenedor). Si tiene valor, sustituye a `NGINX_LOG_PATH`. |
+| `NGINX_LOG_DIR` | `/var/log/nginx` | Carpeta del **host** que se monta (solo lectura) como `/var/log/nginx` en el backend. Ver "Webs en contenedores" abajo. |
+| `MASK_HTTP_IPS` | `true` | Trunca las IPs de visitantes HTTP a /24 (IPv4) o /48 (IPv6) antes de guardarlas. |
+| `IGNORE_IPS` | _(vacio)_ | Tus IPs (casa, móvil), nunca aparecen en el mapa. |
 | `VPS_LAT` | `40.4168` | **Obligatorio**. Latitud de tu VPS — donde caera la "lluvia" de arcos. |
 | `VPS_LON` | `-3.7038` | **Obligatorio**. Longitud de tu VPS. |
 | `VPS_LABEL` | `My VPS` | Texto que veras en el popup del marker del VPS. |
@@ -123,6 +127,40 @@ export const KNOWN_ROUTES = [
   // tus rutas aqui
 ]
 ```
+
+### 2b. Webs en contenedores (p. ej. detrás de Cloudflare Tunnel)
+En la imagen oficial `nginx` el `access.log` es un symlink a `/dev/stdout`: los logs solo existen en `docker logs` y el radar no tiene nada que leer. Para cada web:
+
+1. **IP real del visitante** en el `nginx.conf` de la web (si no, todo llega desde el gateway de Docker `172.x` y el parser lo descarta):
+   ```nginx
+   set_real_ip_from 172.16.0.0/12;
+   real_ip_header   CF-Connecting-IP;
+   ```
+   Solo es seguro si el puerto de la web está publicado en `127.0.0.1` (nadie de fuera puede inventarse la cabecera).
+2. **Volumen** en el compose de la web, encima de `/var/log/nginx` (tapa los symlinks y nginx escribe un archivo real):
+   ```yaml
+   volumes:
+     - /var/log/web/<sitio>:/var/log/nginx
+   ```
+3. **`.env` de siege-map**:
+   ```bash
+   NGINX_LOG_DIR=/var/log/web
+   NGINX_LOG_PATHS=/var/log/nginx/<sitio>/access.log
+   ```
+4. **Rotación** en el host (`/etc/logrotate.d/web`). `copytruncate` porque nginx vive en el contenedor y no recibe la señal de reabrir; `tail -F` aguanta el truncado:
+   ```
+   /var/log/web/*/access.log {
+       daily
+       rotate 14
+       compress
+       delaycompress
+       missingok
+       notifempty
+       copytruncate
+   }
+   ```
+
+Si el backend no puede **leer** el log al arrancar (permisos), esa ingesta se para hasta reiniciar el backend: `docker logs ssh-rain-backend | grep -i permission`.
 
 ### 3. Coordenadas del VPS
 Si no sabes la lat/lon de tu servidor, usa `curl ifconfig.co/json` desde el VPS o consulta el panel de tu proveedor (Hetzner, DigitalOcean, OVH, etc).

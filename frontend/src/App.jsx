@@ -1,12 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import useWebSocket from './hooks/useWebSocket'
-import WorldMap from './components/WorldMap'
 import EventFeed from './components/EventFeed'
 import StatsPanel from './components/StatsPanel'
 import Charts from './components/Charts'
 import AttackerProfile from './components/AttackerProfile'
 import ExportPanel from './components/ExportPanel'
 import FeedFilters from './components/FeedFilters'
+import Globe from './components/Globe'
+import IntelPanel from './components/IntelPanel'
+import Landing from './components/Landing'
+import BotOfTheDay from './components/BotOfTheDay'
+import ReplayBar from './components/ReplayBar'
+import useReplay from './hooks/useReplay'
+
+// Leaflet is only needed for the flat map: load it when someone asks for it
+const WorldMap = lazy(() => import('./components/WorldMap'))
+
+const EMPTY_IDS = new Set()
+
+/* Small per-browser conveniences; the page works without storage */
+function remember(key, value) {
+  try { sessionStorage.setItem(key, value) } catch { /* private mode */ }
+}
+function recall(key) {
+  try { return sessionStorage.getItem(key) } catch { return null }
+}
 
 /* ── Matrix Rain Background ─────────────────────────── */
 function MatrixRain() {
@@ -90,9 +108,24 @@ export default function App() {
   const [timeWindow, setTimeWindow] = useState('')
   const [selectedIp, setSelectedIp] = useState(null)
   const [sourceFilter, setSourceFilter] = useState('all')
+  const [view, setView] = useState(() => recall('siege.view') || 'globe')
+  const [showLanding, setShowLanding] = useState(
+    // A deep link (#intel) goes straight to the dashboard
+    () => recall('siege.intro') !== 'seen' && !window.location.hash
+  )
+  const replay = useReplay(24)
 
-  function handleIpClick(ip) { setSelectedIp(ip) }
+  const handleIpClick = useCallback((ip) => { if (ip) setSelectedIp(ip) }, [])
   function handleCloseDrawer() { setSelectedIp(null) }
+  const closeLanding = useCallback(() => { remember('siege.intro', 'seen'); setShowLanding(false) }, [])
+  function chooseView(v) { remember('siege.view', v); setView(v); if (v === 'map') replay.stop() }
+  function startReplay() { setView('globe'); replay.start() }
+
+  // "#replay" link: open straight into the time-lapse
+  useEffect(() => {
+    if (window.location.hash === '#replay') startReplay()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="app">
@@ -113,6 +146,8 @@ export default function App() {
             </span>
           </div>
           <div className="header-right">
+            <button className="about-btn" onClick={() => setShowLanding(true)}>[ABOUT]</button>
+            <a className="about-btn" href="#intel">[INTEL]</a>
             <ExportPanel window={timeWindow} />
             <div className="window-selector">
               <span className="selector-label">TIME_WINDOW:</span>
@@ -138,10 +173,36 @@ export default function App() {
               <span className="label-bracket">]</span>
               <span className="label-line" />
             </div>
-            <WorldMap events={events} initialIds={initialIds} config={config} onIpClick={handleIpClick} />
+            <div className="view-switch">
+              <button className={view === 'globe' ? 'active' : ''} onClick={() => chooseView('globe')}>[GLOBE]</button>
+              <button className={view === 'map' ? 'active' : ''} onClick={() => chooseView('map')}>[MAP]</button>
+              <button
+                className={replay.active ? 'active' : ''}
+                onClick={replay.active ? replay.stop : startReplay}
+                title="Play the last 24 hours in 30 seconds"
+              >
+                {replay.active ? '[■ STOP]' : '[▶ REPLAY 24H]'}
+              </button>
+              {replay.error && <span className="view-error">{replay.error}</span>}
+            </div>
+            {view === 'globe' ? (
+              <Globe
+                key={replay.active ? 'replay' : 'live'}
+                events={replay.active ? replay.events : events}
+                initialIds={replay.active ? EMPTY_IDS : initialIds}
+                config={config}
+                onIpClick={handleIpClick}
+              />
+            ) : (
+              <Suspense fallback={<div className="intel-empty">LOADING MAP…</div>}>
+                <WorldMap events={events} initialIds={initialIds} config={config} onIpClick={handleIpClick} />
+              </Suspense>
+            )}
+            <ReplayBar replay={replay} />
           </section>
 
           <aside className="sidebar">
+            <BotOfTheDay onIpClick={handleIpClick} />
             <StatsPanel window={timeWindow} onIpClick={handleIpClick} />
             <EventFeed events={events} onIpClick={handleIpClick} activeFilter={sourceFilter} />
           </aside>
@@ -159,6 +220,9 @@ export default function App() {
           </div>
         </footer>
 
+        {/* ── Long-term intelligence ── */}
+        <IntelPanel onIpClick={handleIpClick} />
+
         {/* ── System footer ── */}
         <div className="system-footer">
           <span>LOW_INTERACTION_HONEYPOT</span>
@@ -175,6 +239,8 @@ export default function App() {
       {selectedIp && (
         <AttackerProfile ip={selectedIp} onClose={handleCloseDrawer} />
       )}
+
+      {showLanding && <Landing onEnter={closeLanding} />}
     </div>
   )
 }

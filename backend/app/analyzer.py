@@ -32,8 +32,12 @@ class Analyzer:
             return None
 
         events_sorted = sorted(events, key=lambda e: e.timestamp)
-        unique_usernames = {e.username for e in events_sorted if e.username and e.username != "(none)"}
-        total = len(events_sorted)
+        # HTTP events reuse `username` for the path: only SSH ones are usernames
+        unique_usernames = {
+            e.username for e in events_sorted
+            if e.source == "ssh" and e.username and e.username != "(none)"
+        }
+        total = sum(e.count for e in events_sorted)
         first_seen = events_sorted[0].timestamp
         last_seen = events_sorted[-1].timestamp
 
@@ -56,7 +60,7 @@ class Analyzer:
         route_statuses: dict[str, Counter] = defaultdict(Counter)
         for e in events_sorted:
             if e.source == "http":
-                route_statuses[e.username][e.http_status] += 1
+                route_statuses[e.username][e.http_status] += e.count
         http_routes = []
         for path, statuses in sorted(route_statuses.items(), key=lambda x: -sum(x[1].values())):
             top = statuses.most_common(1)
@@ -109,7 +113,7 @@ class Analyzer:
         # Detect CREDENTIAL_STUFFING: same username from >3 distinct IPs
         username_ips: dict[str, set] = defaultdict(set)
         for e in events:
-            if e.username and e.username != "(none)":
+            if e.source == "ssh" and e.username and e.username != "(none)":
                 username_ips[e.username].add(e.ip)
         cred_stuff_usernames = {u for u, ips in username_ips.items() if len(ips) > 3}
 
@@ -119,8 +123,8 @@ class Analyzer:
 
         patterns: dict[str, int] = defaultdict(int)
         for ip, evts in ip_events.items():
-            ip_users = {e.username for e in evts if e.username != "(none)"}
-            n = len(evts)
+            ip_users = {e.username for e in evts if e.source == "ssh" and e.username != "(none)"}
+            n = sum(e.count for e in evts)
             if n <= 2:
                 patterns["SINGLE_PROBE"] += 1
             elif ip_users & cred_stuff_usernames and len(ip_users) <= 3:
@@ -139,7 +143,7 @@ class Analyzer:
         counter: Counter = Counter()
         for e in events:
             if e.geo and e.geo.org:
-                counter[e.geo.org] += 1
+                counter[e.geo.org] += e.count
         return [{"asn": k, "count": v} for k, v in counter.most_common(limit)]
 
     def get_heatmap(self, window: Optional[int] = None) -> list[list[int]]:
@@ -150,7 +154,7 @@ class Analyzer:
         for e in events:
             try:
                 dt = datetime.fromisoformat(e.timestamp)
-                grid[dt.weekday()][dt.hour] += 1
+                grid[dt.weekday()][dt.hour] += e.count
             except Exception:
                 pass
         return grid
@@ -175,8 +179,8 @@ class Analyzer:
             t1 = datetime.fromisoformat(events[-1].timestamp)
             elapsed_min = (t1 - t0).total_seconds() / 60
             if elapsed_min < 0.05:
-                return float(len(events))
-            return len(events) / elapsed_min
+                return float(sum(e.count for e in events))
+            return sum(e.count for e in events) / elapsed_min
         except Exception:
             return 0.0
 
