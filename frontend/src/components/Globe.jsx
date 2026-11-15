@@ -44,6 +44,13 @@ const HEAT_TAU = 5000           // ms for the target to cool down
 const COOL_TAU = 25000          // ms for an origin to fade to an ember
 const CHARGE_MS = 180           // pulse climbing the tower before it fires
 
+// Auto-track: the camera swings round when an attack starts out of sight
+const TRACK_KEY = 'siege.globe.track'
+const TRACK_HOLD = 5000         // ms between two camera moves: no thrashing under a burst
+const TRACK_EDGE = 1.15         // radians from the view centre before an origin counts as out of sight
+const TRACK_DELAY = 550         // the arc waits this long so the launch is seen
+const TRACK_TAU = 420           // ms, how quickly the camera closes the gap
+
 // Origins are signal towers: height (in globe radii) grows with their events
 const TARGET_H = 0.24           // the VPS tower stands a little above any origin
 const towerHeight = (count) => Math.min(0.18, 0.025 + Math.log2(1 + count) * 0.016)
@@ -121,6 +128,9 @@ export default function Globe({ events, initialIds, config, onIpClick, paused = 
   const canvasRef = useRef(null)
   const traceRef = useRef(null)
   const [hover, setHover] = useState(null)   // the origin under the pointer
+  const [track, setTrack] = useState(() => {
+    try { return localStorage.getItem(TRACK_KEY) !== 'off' } catch { return true }
+  })
 
   // Mutable scene state: read by the draw loop, never triggers a re-render
   const scene = useRef({
@@ -142,8 +152,18 @@ export default function Globe({ events, initialIds, config, onIpClick, paused = 
     hover: null,          // origin under the pointer (same object as in `origins`)
     hoverSince: 0,
     hoverMark: null,      // where it is on screen this frame, if visible
+    track: true,
+    focus: null,          // latest live launch: {from, at, arc, origin}
+    camTarget: null,      // rotation [lambda, phi] the camera is easing towards
+    camSince: -TRACK_HOLD, // so the very first launch after loading can be tracked
     vps: null,
   })
+
+  useEffect(() => {
+    scene.current.track = track
+    if (!track) scene.current.camTarget = null
+    try { localStorage.setItem(TRACK_KEY, track ? 'on' : 'off') } catch { /* private mode */ }
+  }, [track])
 
   // ── VPS position: start centred between it and the Atlantic ──
   useEffect(() => {
@@ -190,7 +210,7 @@ export default function Globe({ events, initialIds, config, onIpClick, paused = 
         const domeLift = 1 + DOME_H * Math.sqrt(1 - DOME_HIT * DOME_HIT)
         const start = now + Math.random() * 250
         o.fired = start
-        s.arcs.push({
+        const arc = {
           interp: geoInterpolate(from, s.vps),
           color: COLORS[kind],
           start: start + (REDUCE_MOTION ? 0 : CHARGE_MS),
@@ -201,7 +221,10 @@ export default function Globe({ events, initialIds, config, onIpClick, paused = 
           blocked,
           bearing: bearing(s.vps, from),
           hit: false,
-        })
+        }
+        s.arcs.push(arc)
+        // Candidate for the camera: only the most recent launch matters
+        s.focus = { from, at: now, arc, origin: o }
       }
     }
     if (s.seen.size > 4000) s.seen = new Set(events.map((e) => e.id))
@@ -777,8 +800,37 @@ export default function Globe({ events, initialIds, config, onIpClick, paused = 
       last = now
       if (!width || !height) return
 
-      // Slow spin, paused while the user is looking around
-      if (!reduceMotion && !paused && !s.dragging && !s.hover && now - s.lastInteraction > 2500) {
+      // The camera only moves on its own while the user is not looking around
+      const idle = !reduceMotion && !paused && !s.dragging && !s.hover && now - s.lastInteraction > 2500
+      if (!idle) {
+        s.camTarget = null
+        s.focus = null
+      } else if (s.track && s.vps && s.focus && now - s.camSince > TRACK_HOLD) {
+        const f = s.focus
+        s.focus = null
+        // An attack is leaving from somewhere we cannot see: go and look
+        if (now - f.at < 1000 && geoDistance(f.from, [-s.rotation[0], -s.rotation[1]]) > TRACK_EDGE) {
+          // Aim between origin and VPS, nearer the origin: the launch is in
+          // view and the arc flies towards the target
+          const aim = geoInterpolate(f.from, s.vps)(0.4)
+          s.camTarget = [-aim[0], Math.max(-60, Math.min(60, -aim[1]))]
+          s.camSince = now
+          if (f.arc.start > now - 100) {
+            f.arc.start += TRACK_DELAY
+            f.origin.fired += TRACK_DELAY
+          }
+        }
+      }
+      if (s.camTarget) {
+        // Shortest way round, easing in so the move does not start with a jerk
+        const dl = ((((s.camTarget[0] - s.rotation[0]) % 360) + 540) % 360) - 180
+        const dp = s.camTarget[1] - s.rotation[1]
+        const k = (1 - Math.exp(-dt / TRACK_TAU)) * Math.min(1, (now - s.camSince) / 350)
+        s.rotation[0] += dl * k
+        s.rotation[1] += dp * k
+        if (Math.abs(dl) < 0.4 && Math.abs(dp) < 0.4) s.camTarget = null
+      } else if (idle) {
+        // Slow spin
         s.rotation[0] += dt * 0.004
       }
 
@@ -988,6 +1040,15 @@ export default function Globe({ events, initialIds, config, onIpClick, paused = 
         <span><i style={{ background: HTTP_COLOR }} />HTTP</span>
         <span><i style={{ background: VISITOR_COLOR }} />VISITS</span>
       </div>
+      <button
+        type="button"
+        className={`globe-track${track ? ' is-on' : ''}`}
+        onClick={() => setTrack((v) => !v)}
+        aria-pressed={track}
+        title="Turn the globe towards attacks that start out of sight"
+      >
+        AUTO-TRACK {track ? 'ON' : 'OFF'}
+      </button>
       <div className="globe-hint">DRAG · ZOOM · CLICK A TOWER</div>
     </div>
   )

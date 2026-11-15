@@ -3353,6 +3353,25 @@ body {
   letter-spacing: 1px;
   color: var(--text-muted);
 }
+.globe-track {
+  position: absolute;
+  right: 12px;
+  bottom: 28px;
+  z-index: 545;
+  padding: 3px 8px;
+  background: rgba(4, 10, 6, 0.7);
+  border: 1px solid var(--border-bright);
+  font-family: var(--font-terminal);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.globe-track::before { content: '○ '; }
+.globe-track.is-on { color: var(--green); border-color: var(--border-active); text-shadow: var(--glow-sm); }
+.globe-track.is-on::before { content: '◉ '; }
+.globe-track:hover { border-color: var(--green); }
+.globe-track:focus-visible { outline: 1px solid var(--green); outline-offset: 2px; }
 
 /* ── Globe corner read-outs ── */
 .globe-wrap { container-type: inline-size; }
