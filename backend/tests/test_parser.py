@@ -25,7 +25,9 @@ def test_openssh_98_process_name():
 
 def test_systemd_timestamp():
     e = parse_line("2026-11-15T10:00:00.123456+01:00 vps sshd[9]: Invalid user git from 1.1.1.1 port 22")
-    assert e.timestamp.startswith("2026-11-15T10:00:00")
+    # +01:00 is CONVERTED to the process's time zone (UTC in the tests), not
+    # stripped: otherwise a host in +01:00 and a container in UTC disagree
+    assert e.timestamp.startswith("2026-11-15T09:00:00")
     assert "+" not in e.timestamp  # naive, like every other timestamp
 
 

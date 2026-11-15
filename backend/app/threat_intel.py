@@ -5,13 +5,14 @@ from typing import Optional
 
 import httpx
 
+from .cache import TTLCache
 from .config import settings
 from .store import store as _store
 
 logger = logging.getLogger(__name__)
 
-# Cache: ip → (data_dict, timestamp)
-_cache: dict[str, tuple[dict, float]] = {}
+# ip → AbuseIPDB answer. Bounded: the keys are attacker addresses.
+_cache = TTLCache(maxsize=20000, ttl=settings.ABUSE_CACHE_TTL)
 
 _semaphore = asyncio.Semaphore(1)
 _last_request_at: float = 0.0
@@ -27,21 +28,16 @@ def _reset_daily_if_needed() -> None:
 
 
 def get_cached_abuse(ip: str) -> dict:
-    if ip in _cache:
-        data, _ = _cache[ip]
-        return data
-    return {}
+    return _cache.get(ip, {}, allow_stale=True)
 
 
 def should_check_ip(ip: str) -> bool:
     if not settings.THREAT_INTEL_ENABLED:
         return False
-    if ip in _cache:
-        data, cached_at = _cache[ip]
-        if time.time() - cached_at < settings.ABUSE_CACHE_TTL:
-            return False
+    if _cache.fresh(ip):
+        return False
     # Only query IPs that appear more than once (avoid one-shot scanners)
-    return len(_store.events_for_ip(ip)) > 1
+    return _store.ip_event_count(ip) > 1
 
 
 async def check_abuseipdb(ip: str) -> dict:
@@ -50,11 +46,8 @@ async def check_abuseipdb(ip: str) -> dict:
     if not settings.ABUSEIPDB_API_KEY:
         return {}
 
-    now = time.time()
-    if ip in _cache:
-        data, cached_at = _cache[ip]
-        if now - cached_at < settings.ABUSE_CACHE_TTL:
-            return data
+    if _cache.fresh(ip):
+        return _cache.get(ip)
 
     _reset_daily_if_needed()
     if _daily_count >= 900:
@@ -63,14 +56,11 @@ async def check_abuseipdb(ip: str) -> dict:
 
     async with _semaphore:
         # Re-check after acquiring lock
-        now = time.time()
-        if ip in _cache:
-            data, cached_at = _cache[ip]
-            if now - cached_at < settings.ABUSE_CACHE_TTL:
-                return data
+        if _cache.fresh(ip):
+            return _cache.get(ip)
 
         # Enforce 1 req/s
-        elapsed = now - _last_request_at
+        elapsed = time.time() - _last_request_at
         if elapsed < 1.0:
             await asyncio.sleep(1.0 - elapsed)
 
@@ -96,7 +86,7 @@ async def check_abuseipdb(ip: str) -> dict:
                         "usage_type": d.get("usageType", ""),
                         "isp": d.get("isp", ""),
                     }
-                    _cache[ip] = (result, time.time())
+                    _cache.set(ip, result)
                     logger.debug(
                         f"AbuseIPDB {ip}: confidence={result['abuse_confidence']}%"
                         f" reports={result['total_reports']}"

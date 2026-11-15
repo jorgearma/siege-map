@@ -24,7 +24,8 @@ Pensado para correr en cualquier VPS con un solo `docker compose up`.
 ### Sidebar (stats panel)
 Todas las cards con tema Pip-Boy: bordes con corner brackets, headers flotantes, scanlines CRT, fuente VT323.
 - **Total counter** con efecto de glitch ocasional (calavera ASCII y mensajes tipo `BREACH_DETECTED`).
-- **Attack patterns**: `DICTIONARY_ATTACK`, `CREDENTIAL_STUFFING`, `PASSWORD_SPRAYING`, `SINGLE_PROBE`.
+- **Alerts**: alertas activas, historial y filtro por severidad (ver "Modelo de deteccion").
+- **Attack patterns**: `PASSWORD_GUESSING`, `PASSWORD_SPRAYING`, `DICTIONARY_ATTACK`, `SSH_SCANNING`, `WEB_SCANNING`, `SINGLE_PROBE`.
 - **Top origins** por pais con barras animadas.
 - **IP addresses** con tabs (ALL / SSH / HTTP / VISITS / RECENT). Click en cualquier IP abre el drawer.
 - **SSH targets**: nube de tags con todos los usernames probados en rojo.
@@ -35,12 +36,12 @@ Todas las cards con tema Pip-Boy: bordes con corner brackets, headers flotantes,
 Cuando clickeas una IP (en el mapa, en la lista o en el feed):
 - Header `THREAT DOSSIER` con badge SSH/HTTP/SSH+HTTP.
 - **Subject identification**: IP grande, geo, ASN/org, links a Shodan y AbuseIPDB.
-- **Threat assessment** con `PipBoyMeter` segmentado (20 bloques tipo barra de salud).
+- **Threat assessment** con `PipBoyMeter` segmentado, severidad y el **desglose del score** (de donde sale cada punto).
 - **Vault stats**: cards con esquinas L para total hits, SSH users, HTTP paths, req/min.
 - **AbuseIPDB intel** con porcentaje de confianza y total de reportes.
 - **Classification**: pattern + speed + KNOWN_THREAT badge si es notorio.
 - **MITRE ATT&CK** badges con TTPs identificados.
-- Tabs OVERVIEW (timeline + summary), SSH (todos los usernames probados), HTTP (rutas con status code y conteo).
+- Tabs OVERVIEW (**narrativa del ataque**: contacto, que probo, a que ritmo, campaña, alertas, veredicto), SSH (todos los usernames probados), HTTP (rutas con status code y conteo).
 
 ![Threat dossier completo](docs/screenshots/threat-dossier.png)
 
@@ -56,6 +57,100 @@ Stream WebSocket con cada evento conforme entra: timestamp, IP, pais con flag, t
 - `GET /api/export/stix?window=` — bundle STIX 2.1 descargable.
 - `GET /api/export/csv?window=` — eventos en CSV.
 - `GET /api/export/report?window=` — resumen ejecutivo JSON.
+- `GET /api/export/report.md?range=` — informe ejecutivo en Markdown desde el historico (SQLite).
+- `GET /api/export/blocklist?days=&min_attempts=&format=txt|nft` — IPs SSH reincidentes para fail2ban / ipset / nftables.
+- `GET /api/alerts?severity=&limit=` — alertas activas, historial y contadores del dia.
+- `GET /api/intel/campaigns` — campañas con nivel de confianza y evidencia.
+
+---
+
+## Modelo de deteccion
+
+Lo que separa esto de "un mapa bonito": cada etiqueta tiene una regla escrita, un test y una explicacion de por que no es un falso positivo. Las capturas de esta seccion usan los datos sinteticos de `scripts/demo_scenario.py`.
+
+### 1. Patron de ataque y MITRE ATT&CK
+
+sshd registra **que usuario** se probo, nunca la contraseña. Por eso el ataque se clasifica por su forma (cuantas cuentas, cuantos intentos por cuenta) y no se afirma nada que el log no permita ver.
+
+| Patron | Forma | Tecnica |
+|---|---|---|
+| `PASSWORD_GUESSING` | pocas cuentas, muchos intentos cada una | T1110.001 |
+| `PASSWORD_SPRAYING` | muchas cuentas (>=6), uno a tres intentos cada una | T1110.003 |
+| `DICTIONARY_ATTACK` | muchas cuentas **y** muchos intentos cada una | T1110.001 |
+| `SSH_SCANNING` | habla con sshd pero no prueba ningun usuario | T1595 |
+| `WEB_SCANNING` | sondas HTTP; con firma de exploit conocida | T1595.002 (+T1190) |
+| `SINGLE_PROBE` | una o dos lineas y desaparece | T1110 / T1595 |
+
+No se usa T1110.004 (credential stuffing): sin la contraseña no se distingue de adivinar. Tampoco T1021.004, que es movimiento lateral con cuentas validas.
+
+### 2. Threat score explicable (0-100)
+
+85 puntos salen de lo que la IP **hizo aqui** y 15 de su reputacion publica. Si nadie ha consultado su reputacion se trata como neutra, asi que una IP nunca queda limitada por no tener dato de AbuseIPDB.
+
+| Factor | Max | Que mide |
+|---|---|---|
+| volume | 25 | intentos (escala logaritmica, satura en 500) |
+| rate | 20 | lineas por minuto (satura en 30) |
+| breadth | 15 | cuentas o rutas distintas (satura en 50) |
+| persistence | 15 | dias distintos en los que ha vuelto |
+| intent | 10 | firma de exploit (+6), SSH y HTTP desde la misma red (+4) |
+| reputation | 15 | confianza de AbuseIPDB |
+
+Severidad: `LOW` <25, `MEDIUM` <50, `HIGH` <75, `CRITICAL` >=75. El drawer enseña el desglose completo.
+
+![Desglose del score](docs/screenshots/score-breakdown.png)
+
+### 3. Campañas con nivel de confianza
+
+Dos IPs que prueban los mismos usuarios en el mismo orden comparten wordlist. Eso demuestra que usan la **misma herramienta**, no que las controle el mismo operador: la lista por defecto de un scanner popular la comparten miles de bots sin relacion. Llamar "campaña" a todo prefijo compartido es el falso positivo clasico.
+
+Cada grupo es solo un candidato. Su confianza sale de tres señales independientes, medidas contra el resto del trafico:
+
+- **specificity**: que raro es el prefijo. Para cada usuario, que parte de las IPs **de fuera** del grupo tambien lo prueban. `root, admin` no vale nada; un prefijo que nadie mas usa vale mucho.
+- **timing**: llegan juntas? Parte del grupo cuyo primer contacto cae en su hora mas activa.
+- **network**: comparten infraestructura? Parte del grupo que esta en un /24 con otro miembro (un rango alquilado pesa mas que "todas son de DigitalOcean").
+
+Un grupo es `coordinated campaign` (HIGH) solo si **al menos dos señales coinciden**; una sola se queda en MEDIUM. Los grupos pequeños se amortiguan: dos IPs "llegando a la vez" es poca evidencia.
+
+Segundo detector, para lo que el prefijo no ve: el **spray distribuido**, donde cada maquina prueba uno o dos usuarios. Señal: muchas IPs distintas contra el **mismo usuario** en diez minutos, muy por encima de lo habitual para ese usuario **y** con su cuota del trafico multiplicada (si todo sube a la vez es una rafaga, no un spray).
+
+![Campañas con confianza y evidencia](docs/screenshots/campaigns.png)
+
+No se usa la version del cliente SSH: sshd no la registra con el `LogLevel` por defecto.
+
+### 4. Alertas
+
+| Regla | Dispara cuando | Severidad |
+|---|---|---|
+| `login_success` | una IP que estaba fallando logins consigue uno **aceptado** | CRITICAL |
+| `exploit_2xx` | una ruta de exploit conocida recibe respuesta 2xx | HIGH |
+| `high_score` | una IP activa alcanza el umbral de score | segun score |
+| `campaign` | campaña activa de confianza MEDIUM/HIGH | segun campaña |
+| `burst` | trafico de 5 min por encima de media + 3σ de las ultimas 24 h | MEDIUM/HIGH |
+| `country_surge` | muchas IPs nuevas de un pais **y** su cuota del trafico se dobla | MEDIUM |
+| `user_spray` | una IP prueba muchas cuentas en 10 min | MEDIUM |
+
+Control de ruido:
+
+- **Una alerta por (regla, sujeto)**. Mientras la condicion sigue, la alerta existente se actualiza (`hits`, `last_seen`); no se repite.
+- **Cooldown**: se resuelve tras `ALERT_COOLDOWN` segundos de calma, y solo entonces el mismo sujeto puede volver a alertar.
+- **Solo se reanuncia si sube de severidad.**
+- **Umbrales relativos**: las reglas de volumen comparan con el historico del propio sensor, nunca con un "N eventos" fijo. Un servidor expuesto tiene un fondo permanente de bots.
+
+Un login aceptado **nunca** se guarda ni se muestra (puede ser el dueño): solo cuenta si esa IP venia fallando, y el nombre de la cuenta va unicamente al webhook del operador.
+
+Destinos: dashboard (panel, aviso en la cabecera y toast por WebSocket), y opcionalmente Discord, Slack, Telegram o cualquier webhook JSON (`ALERT_WEBHOOK_URL`).
+
+![Alertas en el dashboard](docs/screenshots/alerts.png)
+![Narrativa del ataque](docs/screenshots/attack-narrative.png)
+
+### 5. Como se valida
+
+`backend/tests/` (108 tests) incluye trafico sintetico con una botnet real escondida entre bots sin relacion: la botnet debe salir HIGH y la wordlist por defecto compartida debe salir LOW. Las reglas Sigma de `detections/` se validan en CI con `sigma check`.
+
+```bash
+cd backend && pip install -r requirements-dev.txt && python -m pytest -q
+```
 
 ---
 
@@ -84,6 +179,23 @@ python scripts/fake_ssh_log.py --output ./logs/auth.log --rate 2.0
 
 El compose dev monta `./logs/auth.log` en lugar de los logs del host.
 
+### Demo guiada (5 minutos)
+
+`scripts/demo_scenario.py` escribe un dia de ataque completo para que cada deteccion tenga algo que enseñar:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+python scripts/demo_scenario.py        # historico + parte en vivo
+```
+
+1. **Mapa y feed**: llegan los eventos en vivo.
+2. **INTEL -> CAMPAIGNS**: la botnet (`zx_miner...`, un /24, 20 minutos) sale como `coordinated campaign`; la wordlist `root, admin, user, test` compartida por maquinas sin relacion sale como `shared tooling`. Click en la fila para ver la evidencia.
+3. **Click en un miembro**: dossier con desglose del score y narrativa.
+4. A los ~3 minutos el script lanza un pico de trafico y un login aceptado tras siete fallos: saltan `BURST` y `LOGIN ACCEPTED` (aviso en la cabecera + toast).
+5. **[BLOCKLIST]** y `curl localhost:8000/api/export/report.md` para el informe.
+
+Con `GEO_PROVIDER=ip-api` (45 consultas/min) las ~130 IPs tardan unos tres minutos en aparecer; con `mmdb` es inmediato.
+
 ---
 
 ## Adaptar a tu entorno
@@ -100,6 +212,7 @@ Todo lo que probablemente quieras tocar.
 | `NGINX_LOG_DIR` | `/var/log/nginx` | Carpeta del **host** que se monta (solo lectura) como `/var/log/nginx` en el backend. Ver "Webs en contenedores" abajo. |
 | `MASK_HTTP_IPS` | `true` | Trunca las IPs de visitantes HTTP a /24 (IPv4) o /48 (IPv6) antes de guardarlas. |
 | `IGNORE_IPS` | _(vacio)_ | Tus IPs (casa, móvil), nunca aparecen en el mapa. |
+| `TZ` | `UTC` | Zona horaria del **host**. Las lineas syslog clasicas no llevan offset: si el contenedor usa otro reloj, las ventanas de tiempo salen desplazadas. |
 | `VPS_LAT` | `40.4168` | **Obligatorio**. Latitud de tu VPS — donde caera la "lluvia" de arcos. |
 | `VPS_LON` | `-3.7038` | **Obligatorio**. Longitud de tu VPS. |
 | `VPS_LABEL` | `My VPS` | Texto que veras en el popup del marker del VPS. |
@@ -111,6 +224,10 @@ Todo lo que probablemente quieras tocar.
 | `GEO_CACHE_TTL` | `86400` | TTL del cache de geo en segundos (24h por defecto). |
 | `ABUSE_CACHE_TTL` | `86400` | TTL del cache de AbuseIPDB. |
 | `WS_BROADCAST_INTERVAL` | `1.0` | Cadencia de envio por WebSocket en segundos. Sube a `2.0` si tu CPU sufre. |
+| `ALERT_WEBHOOK_URL` | _(vacio)_ | Opcional. Webhook de Discord/Slack (se detectan) o cualquier URL que acepte JSON. Sin el, las alertas solo salen en el dashboard. |
+| `ALERT_TELEGRAM_BOT_TOKEN` / `ALERT_TELEGRAM_CHAT_ID` | _(vacio)_ | Opcional. Alertas por Telegram. |
+| `ALERT_NOTIFY_MIN_SEVERITY` | `HIGH` | Severidad minima que se envia fuera. |
+| `ALERT_COOLDOWN` | `600` | Segundos de calma para resolver una alerta. El resto de umbrales (`ALERT_*`) estan comentados en `.env.example`. |
 | `FRONTEND_PORT` | `8082` | Puerto del dashboard (en `127.0.0.1`). Cambialo si ya está en uso. |
 | `BACKEND_PORT` | `8000` | Puerto del backend FastAPI. |
 
@@ -206,9 +323,15 @@ SSH/Nginx log --tail-F--> FastAPI ingesta
                               |
                               +--> threat intel (AbuseIPDB, opcional, cached)
                               |
-                              +--> analyzer (patterns + MITRE TTPs)
+                              +--> analyzer (patron + MITRE + score explicable)
                               |
-                              +--> EventStore (deque circular en memoria)
+                              +--> EventStore (deque en memoria, indice por IP)
+                              |
+                              +--> SQLite (agregados diarios, IPs, eventos recientes, alertas)
+                              |
+                              +--> campaigns (grupos con confianza) --+
+                              |                                       v
+                              +--> alerts (reglas, dedup, cooldown) --> webhook / Telegram
                               |
                               +--> WebSocket broadcast (1s) --> React UI
                               |
@@ -221,7 +344,13 @@ SSH/Nginx log --tail-F--> FastAPI ingesta
 - `parser.py` — regex SSH + HTTP (Nginx combined).
 - `geo.py` — geolocalizacion con cache TTL.
 - `threat_intel.py` — AbuseIPDB con rate limit (1 req/s, 900/dia).
-- `analyzer.py` — clasificador heuristico, MITRE ATT&CK, heatmap 7x24.
+- `analyzer.py` — patron de ataque, MITRE ATT&CK, score con desglose, heatmap 7x24.
+- `campaigns.py` — campañas por wordlist y spray distribuido, con confianza y evidencia.
+- `alerts.py` / `notify.py` — reglas, deduplicacion, cooldown, historial; envio a Discord/Slack/Telegram/webhook.
+- `narrative.py` — historia de una IP en orden.
+- `report.py` — informe ejecutivo en Markdown (`python -m app.report --days 30`).
+- `db.py` — SQLite: agregados diarios, IPs, eventos recientes y alertas.
+- `cache.py` — cache TTL acotada (las claves las controla el atacante).
 - `stix_export.py` — bundle STIX 2.1 sin dependencia externa.
 - `store.py` — `EventStore` con deque circular y dedupe por minuto.
 - `models.py` — dataclasses `SSHEvent`, `HttpEvent`, `GeoInfo`.
@@ -250,7 +379,9 @@ SSH/Nginx log --tail-F--> FastAPI ingesta
 - **Deduplicacion** ligera (`ip:user:type:minute`) para no inflar metricas.
 - **Heuristica multi-factor** combinando velocidad (rpm), patron, diversidad de usernames y reputacion externa.
 - Volumen del log montado **read-only** en el contenedor.
-- Sin DB: todo en memoria con deque acotado (no hay nada que limpiar al reiniciar).
+- SQLite en un volumen: agregados diarios para siempre, eventos individuales `EVENT_RETENTION_DAYS` dias.
+- Caches **acotadas**: toda clave que controla un atacante (IP, usuario) tiene limite de tamaño.
+- Entrada publica validada y salida escapada: ver [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -291,9 +422,9 @@ docker compose up -d --build
 
 ## Roadmap
 
-- Persistencia opcional (SQLite/DuckDB) para historicos largos y replay.
 - Multi-sensor: agregar varios VPS en un solo dashboard.
-- Webhooks/Slack alerts en base a threat score.
+- Honeypot de interaccion media (Cowrie): contraseñas probadas y comandos tras el login.
+- Reputacion por ASN a partir del historico propio.
 - Modo claro (heretico pero por completitud).
 - TLS/auth para exponer el dashboard publicamente.
 

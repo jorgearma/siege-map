@@ -225,49 +225,92 @@ function Ssh({ range }) {
   )
 }
 
+const LEVEL_COLOR = { HIGH: '#ff0040', MEDIUM: '#ffb000', LOW: '#5d6f62' }
+
+function Confidence({ c }) {
+  const color = LEVEL_COLOR[c.level]
+  return (
+    <div className="intel-conf" title={c.evidence.join('\n')}>
+      <span className="intel-conf-track">
+        <span className="intel-conf-fill" style={{ width: `${c.confidence}%`, background: color }} />
+      </span>
+      <span className="intel-conf-num">{c.confidence}</span>
+      <span className="intel-kind" style={{ color }}>{c.level}</span>
+    </div>
+  )
+}
+
 function Campaigns({ onIpClick }) {
-  const d = useApi('/api/intel/campaigns', 60000)
+  const d = useApi('/api/intel/campaigns?limit=25', 60000)
+  const [open, setOpen] = useState(null)
   if (!d) return <Empty>LOADING…</Empty>
   if (!d.campaigns.length) {
     return (
       <Empty>
-        NO CAMPAIGNS YET — a campaign appears when two or more addresses try the same first{' '}
-        {d.prefix_len} usernames in the same order
+        NO GROUPS YET — one appears when two or more addresses try the same first{' '}
+        {d.prefix_len} usernames in the same order, or many addresses hit one account at once
       </Empty>
     )
   }
+  const confident = d.campaigns.filter((c) => c.level !== 'LOW').length
   return (
     <Card
-      title="BOTNET CAMPAIGNS" wide
-      note={`Addresses that try the same first ${d.prefix_len} usernames in the same order are running the same wordlist: one operator, many machines.`}
+      title="CAMPAIGNS" wide
+      note={`Sharing a wordlist only proves the same tool, not the same operator. Each group is scored on independent evidence — how rare its wordlist is, whether its addresses arrived together, whether they share a network — and is called a coordinated campaign only when at least two agree. ${confident} of ${d.campaigns.length} groups pass MEDIUM. Click a row for its evidence.`}
     >
       <div className="intel-table-wrap">
         <table className="intel-table">
           <thead>
             <tr>
-              <th>ID</th><th>WORDLIST STARTS WITH</th><th className="num">IPS</th>
+              <th>CONFIDENCE</th><th>VERDICT</th><th>TARGETS</th><th className="num">IPS</th>
               <th className="num">COUNTRIES</th><th className="num">ATTEMPTS</th>
-              <th>ACTIVE</th><th>MEMBERS</th>
+              <th>SEEN</th><th>MEMBERS</th>
             </tr>
           </thead>
           <tbody>
             {d.campaigns.map((c) => (
-              <tr key={c.fingerprint}>
-                <td className="mono dim">{c.fingerprint}</td>
-                <td>{c.usernames.map((u, i) => <span key={i} className="intel-chip">{u}</span>)}</td>
-                <td className="num strong">{fmt(c.ips)}</td>
-                <td className="num">
-                  {c.countries}{' '}
-                  <span className="dim">{c.top_countries.map((t) => flag(t.country_code)).join(' ')}</span>
-                </td>
-                <td className="num">{fmt(c.attempts)}</td>
-                <td className="dim">{day(c.first_seen)} → {day(c.last_seen)}</td>
-                <td>
-                  {c.sample_ips.slice(0, 3).map((ip) => (
-                    <span key={ip} className="mono ip-clickable intel-ip" onClick={() => onIpClick?.(ip)}>{ip}</span>
-                  ))}
-                </td>
-              </tr>
+              <React.Fragment key={c.fingerprint}>
+                <tr className="intel-row-link" onClick={() => setOpen(open === c.fingerprint ? null : c.fingerprint)}>
+                  <td><Confidence c={c} /></td>
+                  <td>
+                    <span className="strong">{c.label}</span>
+                    {c.active && <span className="alert-live"> ● ACTIVE</span>}
+                    <div className="mono dim">{c.fingerprint}</div>
+                  </td>
+                  <td>{c.usernames.map((u, i) => <span key={i} className="intel-chip">{u}</span>)}</td>
+                  <td className="num strong">{fmt(c.ips)}</td>
+                  <td className="num">
+                    {c.countries}{' '}
+                    <span className="dim">{c.top_countries.map((t) => flag(t.country_code)).join(' ')}</span>
+                  </td>
+                  <td className="num">{fmt(c.attempts)}</td>
+                  <td className="dim">{day(c.first_seen)} → {day(c.last_seen)}</td>
+                  <td>
+                    {c.sample_ips.slice(0, 3).map((ip) => (
+                      <span
+                        key={ip} className="mono ip-clickable intel-ip"
+                        onClick={(ev) => { ev.stopPropagation(); onIpClick?.(ip) }}
+                      >
+                        {ip}
+                      </span>
+                    ))}
+                  </td>
+                </tr>
+                {open === c.fingerprint && (
+                  <tr className="intel-evidence">
+                    <td colSpan={8}>
+                      <ul>
+                        {c.evidence.map((line, i) => <li key={i}>{line}</li>)}
+                      </ul>
+                      <div className="intel-signals">
+                        {Object.entries(c.signals).map(([name, value]) => (
+                          <span key={name}>{name.toUpperCase()} <b>{Math.round(value * 100)}%</b></span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>
@@ -506,6 +549,18 @@ export default function IntelPanel({ onIpClick }) {
   const [range, setRange] = useState('7d')
   const ranged = !['campaigns', 'flow'].includes(tab)
   const rootRef = useRef(null)
+
+  // Other panels can ask for a tab (e.g. the campaigns summary next to the chart)
+  useEffect(() => {
+    function onAsk(ev) {
+      if (TABS.some((t) => t.key === ev.detail)) {
+        setTab(ev.detail)
+        rootRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }
+    }
+    window.addEventListener('siege:intel-tab', onAsk)
+    return () => window.removeEventListener('siege:intel-tab', onAsk)
+  }, [])
 
   // The panel does not exist yet when the browser resolves "#intel"
   useEffect(() => {

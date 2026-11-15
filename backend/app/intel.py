@@ -9,6 +9,7 @@ from typing import Optional
 
 import httpx
 
+from .cache import TTLCache
 from .config import settings
 from .models import GeoInfo
 
@@ -18,7 +19,7 @@ TOR_LIST_URL = "https://check.torproject.org/torbulkexitlist"
 _tor_exits: set[str] = set()
 _tor_loaded_at: float = 0.0
 
-_gn_cache: dict[str, tuple[dict, float]] = {}
+_gn_cache = TTLCache(maxsize=5000, ttl=86400)
 _gn_day_start: float = 0.0
 _gn_count: int = 0
 
@@ -72,13 +73,16 @@ async def check_greynoise(ip: str) -> dict:
     GreyNoise community API. Tells mass internet scanners ("noise") and
     known-benign services ("riot") apart from targeted activity.
     Only called when someone opens a dossier, to stay inside the free quota.
+
+    The caller must pass an address this sensor has really seen (main.py
+    checks it): the quota is small and the endpoint is public.
     """
     global _gn_day_start, _gn_count
     if not settings.GREYNOISE_API_KEY:
         return {}
     now = time.time()
-    if ip in _gn_cache and now - _gn_cache[ip][1] < 86400:
-        return _gn_cache[ip][0]
+    if _gn_cache.fresh(ip):
+        return _gn_cache.get(ip)
     if now - _gn_day_start >= 86400:
         _gn_day_start, _gn_count = now, 0
     if _gn_count >= settings.GREYNOISE_DAILY_LIMIT:
@@ -109,5 +113,5 @@ async def check_greynoise(ip: str) -> dict:
     except Exception as e:
         logger.warning(f"GreyNoise lookup failed for {ip}: {e}")
         return {}
-    _gn_cache[ip] = (result, now)
+    _gn_cache.set(ip, result)
     return result

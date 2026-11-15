@@ -12,6 +12,8 @@ import Landing from './components/Landing'
 import BotOfTheDay from './components/BotOfTheDay'
 import ReplayBar from './components/ReplayBar'
 import useReplay from './hooks/useReplay'
+import useAlerts from './hooks/useAlerts'
+import AlertsPanel, { AlertChip, AlertToasts } from './components/AlertsPanel'
 
 // Leaflet is only needed for the flat map: load it when someone asks for it
 const WorldMap = lazy(() => import('./components/WorldMap'))
@@ -104,7 +106,8 @@ const WINDOWS = [
 
 /* ── Main App ───────────────────────────────────────── */
 export default function App() {
-  const { events, initialIds, config, connected } = useWebSocket()
+  const { events, initialIds, config, connected, alerts: liveAlerts } = useWebSocket()
+  const alerts = useAlerts(liveAlerts)
   const [timeWindow, setTimeWindow] = useState('')
   const [selectedIp, setSelectedIp] = useState(null)
   const [sourceFilter, setSourceFilter] = useState('all')
@@ -144,13 +147,18 @@ export default function App() {
               <span className="status-dot" />
               {connected ? 'LIVE_STREAM' : 'DISCONNECTED'}
             </span>
+            <AlertChip alerts={alerts} />
           </div>
           <div className="header-right">
-            <button className="about-btn" onClick={() => setShowLanding(true)}>[ABOUT]</button>
-            <a className="about-btn" href="#intel">[INTEL]</a>
-            <ExportPanel window={timeWindow} />
-            <div className="window-selector">
-              <span className="selector-label">TIME_WINDOW:</span>
+            <nav className="hdr-group" aria-label="Sections">
+              <button className="hdr-btn" onClick={() => setShowLanding(true)}>[ABOUT]</button>
+              <a className="hdr-btn" href="#intel">[INTEL]</a>
+            </nav>
+            <div className="hdr-group hdr-group--export">
+              <ExportPanel window={timeWindow} />
+            </div>
+            <div className="hdr-group window-selector" role="group" aria-label="Time window">
+              <span className="selector-label">WINDOW</span>
               {WINDOWS.map((w) => (
                 <button
                   key={w.value}
@@ -202,6 +210,7 @@ export default function App() {
           </section>
 
           <aside className="sidebar">
+            <AlertsPanel alerts={alerts} onIpClick={handleIpClick} />
             <BotOfTheDay onIpClick={handleIpClick} />
             <StatsPanel window={timeWindow} onIpClick={handleIpClick} />
             <EventFeed events={events} onIpClick={handleIpClick} activeFilter={sourceFilter} />
@@ -239,6 +248,8 @@ export default function App() {
       {selectedIp && (
         <AttackerProfile ip={selectedIp} onClose={handleCloseDrawer} />
       )}
+
+      <AlertToasts live={liveAlerts} onIpClick={handleIpClick} />
 
       {showLanding && <Landing onEnter={closeLanding} />}
     </div>

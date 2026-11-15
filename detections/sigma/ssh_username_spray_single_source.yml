@@ -3,17 +3,18 @@ id: 6a1f0c52-3b7e-4c1e-9a55-0d2f4b8e7a11
 status: experimental
 description: |
   Detects a single source address trying to authenticate over SSH with many
-  different usernames in a short time. This is the "dictionary attack" pattern
-  siege-map sees most often: one bot walking a wordlist of account names.
+  different usernames in a short time: one bot walking a wordlist of account
+  names. Many accounts with few tries each is the shape of password spraying
+  (T1110.003). sshd does not log the password, so the split between spraying
+  and guessing is made on the number of accounts, not on credentials.
 references:
-  - https://attack.mitre.org/techniques/T1110/001/
+  - https://attack.mitre.org/techniques/T1110/003/
   - https://github.com/jorgearma/siege-map
 author: Jorge Escobar (siege-map)
 date: 2026-11-15
 tags:
   - attack.credential-access
-  - attack.t1110.001
-  - attack.t1021.004
+  - attack.t1110.003
 logsource:
   product: linux
   service: sshd
@@ -28,7 +29,7 @@ falsepositives:
   - Internal vulnerability scanners
 level: low
 ---
-title: SSH Username Dictionary Attack
+title: SSH Username Spray From One Source
 id: 0c7d5a3e-91b4-4f0a-8d1c-5e2a7b9f3c44
 status: experimental
 description: More than 5 distinct usernames from the same source in 10 minutes.
@@ -46,7 +47,7 @@ correlation:
     gt: 5
 tags:
   - attack.credential-access
-  - attack.t1110.001
+  - attack.t1110.003
 falsepositives:
   - See base rule
 level: medium

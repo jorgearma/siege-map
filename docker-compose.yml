@@ -4,6 +4,10 @@ services:
     container_name: ssh-rain-backend
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Same time zone as the host: classic syslog lines ("Apr 13 19:18:25")
+      # carry no offset, so the container must read them with the host's clock
+      - TZ=${TZ:-UTC}
     # Hardening: non-root user (Dockerfile) + only what it needs to read logs
     user: "10001"
     group_add:

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { isKnownRoute } from '../config/knownRoutes'
+import { PATTERNS } from '../lib/severity'
 
 function useFetch(url, interval = 5000) {
   const [data, setData] = useState(null)
@@ -26,19 +27,8 @@ function formatCount(n) {
 }
 
 /* ── Color system ─────────────────────────────────────── */
-const PATTERN_COLORS = {
-  DICTIONARY_ATTACK:   '#ff0040',
-  CREDENTIAL_STUFFING: '#ff6600',
-  PASSWORD_SPRAYING:   '#ffb000',
-  SINGLE_PROBE:        '#00d4ff',
-}
-
-const PATTERN_LABELS = {
-  DICTIONARY_ATTACK:   'DICT ATTACK',
-  CREDENTIAL_STUFFING: 'CRED STUFF',
-  PASSWORD_SPRAYING:   'PASS SPRAY',
-  SINGLE_PROBE:        'SINGLE PROBE',
-}
+const PATTERN_COLORS = Object.fromEntries(Object.entries(PATTERNS).map(([k, v]) => [k, v.color]))
+const PATTERN_LABELS = Object.fromEntries(Object.entries(PATTERNS).map(([k, v]) => [k, v.short]))
 
 function StatusBadge({ status }) {
   const s = status

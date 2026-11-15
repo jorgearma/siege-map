@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import MitreBadge from './MitreBadge'
 import { isKnownRoute } from '../config/knownRoutes'
+import { PATTERNS, SEVERITY_COLOR, CONFIDENCE_COLOR } from '../lib/severity'
 
 function StatusBadge({ status }) {
   if (!status) return null
@@ -25,11 +26,30 @@ function flag(code) {
   )
 }
 
-const PATTERN_COLORS = {
-  DICTIONARY_ATTACK:  { color: '#ff0040', label: 'DICTIONARY ATTACK' },
-  CREDENTIAL_STUFFING:{ color: '#ff6600', label: 'CREDENTIAL STUFFING' },
-  PASSWORD_SPRAYING:  { color: '#ffb000', label: 'PASSWORD SPRAYING' },
-  SINGLE_PROBE:       { color: '#00d4ff', label: 'SINGLE PROBE' },
+const PATTERN_COLORS = PATTERNS
+
+const STEP_COLOR = {
+  contact: '#00d4ff', ssh: '#ff0040', http: '#ffd700', rate: '#ffb000', multi: '#ff7a1a',
+  campaign: '#ff7a1a', persistence: '#9085e9', reputation: '#ffb000', alert: '#ff0040',
+}
+
+/** Where each point of the score comes from. */
+function ScoreBreakdown({ parts }) {
+  if (!parts?.length) return null
+  return (
+    <ul className="fo-score-parts">
+      {parts.map((p) => (
+        <li key={p.factor} title={`${p.factor}: ${p.points} of ${p.max} points`}>
+          <span className="fo-score-factor">{p.factor.toUpperCase()}</span>
+          <span className="fo-score-track">
+            <span className="fo-score-fill" style={{ width: `${(p.points / p.max) * 100}%` }} />
+          </span>
+          <span className="fo-score-points">{p.points}/{p.max}</span>
+          <span className="fo-score-detail">{p.detail}</span>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 const SPEED_COLORS = {
@@ -116,7 +136,7 @@ export default function AttackerProfile({ ip, onClose }) {
   const sourceType = hasSsh && hasHttp ? 'mixed' : hasSsh ? 'ssh' : 'http'
   const accentColor = sourceType === 'ssh' ? '#ff0040' : sourceType === 'http' ? '#ffd700' : '#00d4ff'
 
-  const threatColor = profile?.threat_score >= 70 ? '#ff0040' : profile?.threat_score >= 40 ? '#ffb000' : '#00ff41'
+  const threatColor = SEVERITY_COLOR[profile?.severity] || '#00ff41'
 
   return (
     <>
@@ -203,6 +223,14 @@ export default function AttackerProfile({ ip, onClose }) {
                 color={threatColor}
                 label="DANGER LEVEL"
               />
+              {profile.severity && (
+                <div className="fo-badges">
+                  <span className="fo-badge" style={{ borderColor: threatColor, color: threatColor }}>
+                    SEVERITY: {profile.severity}
+                  </span>
+                </div>
+              )}
+              <ScoreBreakdown parts={profile.score_breakdown} />
             </div>
 
             {/* ── COMBAT STATS ── */}
@@ -281,8 +309,17 @@ export default function AttackerProfile({ ip, onClose }) {
                 )}
                 {profile.campaign_size > 1 && (
                   <p className="fo-record-note">
-                    Part of a botnet of <b>{profile.campaign_size}</b> addresses running the same
-                    wordlist ({profile.campaign_usernames}…)
+                    Shares its wordlist ({profile.campaign_usernames}…) with{' '}
+                    <b>{profile.campaign_size - 1}</b> other address(es)
+                    {profile.campaign_label && (
+                      <>
+                        {' — '}
+                        <b style={{ color: CONFIDENCE_COLOR[profile.campaign_level] }}>
+                          {profile.campaign_label}
+                        </b>
+                        , confidence {profile.campaign_confidence}/100
+                      </>
+                    )}
                   </p>
                 )}
                 {profile.greynoise && (
@@ -339,21 +376,20 @@ export default function AttackerProfile({ ip, onClose }) {
             {/* ── OVERVIEW TAB ── */}
             {activeTab === 'overview' && (
               <div className="fo-tab-content">
+                <div className="fo-list-header">ATTACK NARRATIVE</div>
                 <div className="fo-timeline">
-                  <div className="fo-tl-entry">
-                    <span className="fo-tl-dot" />
-                    <div className="fo-tl-data">
-                      <span className="fo-tl-key">FIRST CONTACT</span>
-                      <span className="fo-tl-val">{profile.first_seen?.slice(0, 19).replace('T', ' ')}</span>
+                  {(profile.narrative || []).map((step, i) => (
+                    <div className="fo-tl-entry" key={i}>
+                      <span className="fo-tl-dot" style={{ background: STEP_COLOR[step.kind] }} />
+                      <div className="fo-tl-data">
+                        <span className="fo-tl-key">
+                          {step.kind.toUpperCase()}
+                          {step.ts ? ` · ${step.ts.slice(0, 16).replace('T', ' ')}` : ''}
+                        </span>
+                        <span className="fo-tl-val fo-tl-val--text">{step.text}</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="fo-tl-entry">
-                    <span className="fo-tl-dot" />
-                    <div className="fo-tl-data">
-                      <span className="fo-tl-key">LAST SIGNAL</span>
-                      <span className="fo-tl-val">{profile.last_seen?.slice(0, 19).replace('T', ' ')}</span>
-                    </div>
-                  </div>
+                  ))}
                 </div>
                 {hasSsh && (
                   <div className="fo-summary-row">

@@ -23,7 +23,7 @@ export default function BotOfTheDay({ onIpClick }) {
         <span><b>{(bot.attempts || bot.lines).toLocaleString()}</b> attempts today</span>
         <span><b>{bot.usernames}</b> usernames</span>
         {bot.days_active > 1 && <span><b>{bot.days_active}</b> days active</span>}
-        {bot.campaign_size > 1 && <span>botnet of <b>{bot.campaign_size}</b></span>}
+        {bot.campaign_size > 1 && <span>wordlist shared by <b>{bot.campaign_size}</b></span>}
       </div>
       {bot.top_usernames?.length > 0 && (
         <div className="botd-users">

@@ -5,6 +5,7 @@ const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${wind
 export default function useWebSocket() {
   const [events, setEvents] = useState([])
   const [config, setConfig] = useState(null)
+  const [alerts, setAlerts] = useState([])
   const [connected, setConnected] = useState(false)
   const initialIdsRef = useRef(new Set())
   const wsRef = useRef(null)
@@ -33,6 +34,8 @@ export default function useWebSocket() {
           // Mark historical IDs so the map skips animating them
           msg.data.forEach((ev) => initialIdsRef.current.add(ev.id))
           setEvents(msg.data)
+        } else if (msg.type === 'alert') {
+          setAlerts((prev) => [msg.data, ...prev.filter((a) => a.id !== msg.data.id)].slice(0, 50))
         } else if (msg.type === 'events') {
           setEvents((prev) => {
             const merged = [...msg.data, ...prev]
@@ -63,5 +66,5 @@ export default function useWebSocket() {
     }
   }, [connect])
 
-  return { events, initialIds: initialIdsRef.current, config, connected }
+  return { events, initialIds: initialIdsRef.current, config, connected, alerts }
 }

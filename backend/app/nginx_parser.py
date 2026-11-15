@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from .config import settings
 from .models import SSHEvent
+from .parser import to_local_naive
 from .signatures import match_signature
 from .ua import parse_ua
 
@@ -69,12 +70,14 @@ SOCIAL = {
 
 
 def _parse_ts(raw: str) -> str:
-    """'13/Apr/2026:19:23:31 +0200' or ISO 8601 -> naive ISO"""
+    """'13/Apr/2026:19:23:31 +0200' or ISO 8601 -> naive local ISO"""
     try:
         if raw[:4].isdigit():
-            return datetime.fromisoformat(raw).replace(tzinfo=None).isoformat()
-        dt = datetime.strptime(raw.split(' ')[0], '%d/%b/%Y:%H:%M:%S')
-        return dt.isoformat()
+            return to_local_naive(datetime.fromisoformat(raw)).isoformat()
+        try:
+            return to_local_naive(datetime.strptime(raw, '%d/%b/%Y:%H:%M:%S %z')).isoformat()
+        except ValueError:
+            return datetime.strptime(raw.split(' ')[0], '%d/%b/%Y:%H:%M:%S').isoformat()
     except Exception:
         return datetime.now().isoformat()
 

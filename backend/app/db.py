@@ -89,6 +89,22 @@ CREATE TABLE IF NOT EXISTS ip_users (
     count    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (ip, username)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS alerts (
+    id        TEXT PRIMARY KEY,
+    ts        TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    rule      TEXT NOT NULL,
+    key       TEXT NOT NULL,
+    severity  TEXT NOT NULL,
+    title     TEXT NOT NULL,
+    detail    TEXT NOT NULL DEFAULT '',
+    ip        TEXT NOT NULL DEFAULT '',
+    mitre     TEXT NOT NULL DEFAULT '',
+    hits      INTEGER NOT NULL DEFAULT 1,
+    status    TEXT NOT NULL DEFAULT 'active'
+);
+CREATE INDEX IF NOT EXISTS alerts_ts ON alerts (ts);
 """
 
 
@@ -307,6 +323,8 @@ class Database:
         self._last_prune = today
         cutoff = (datetime.now() - timedelta(days=settings.EVENT_RETENTION_DAYS)).isoformat()
         cur.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+        alert_cutoff = (datetime.now() - timedelta(days=settings.ALERT_RETENTION_DAYS)).isoformat()
+        cur.execute("DELETE FROM alerts WHERE ts < ?", (alert_cutoff,))
 
     # ── read side ─────────────────────────────────────────────
 
@@ -446,6 +464,81 @@ class Database:
             (limit,),
         )
         return [dict(r) for r in rows]
+
+    def blocklist(self, days: int = 7, min_attempts: int = 10, limit: int = 5000) -> list[dict]:
+        """SSH addresses worth blocking: enough real attempts, seen recently."""
+        since = (datetime.now() - timedelta(days=days)).isoformat()
+        rows = self._q(
+            "SELECT ip, attempts, days_active, last_seen, country_code FROM ips "
+            "WHERE source = 'ssh' AND attempts >= ? AND last_seen >= ? "
+            "ORDER BY attempts DESC LIMIT ?",
+            (min_attempts, since, limit),
+        )
+        return [dict(r) for r in rows]
+
+    def has_dual_vector(self, ip: str) -> int:
+        """HTTP hits recorded for the /24 (or /48) of an SSH address."""
+        rows = self._q(
+            "SELECT h.lines AS hits FROM ips s JOIN ips h ON h.ip = s.ip_masked "
+            "WHERE s.ip = ? AND s.source = 'ssh' AND h.source = 'http'", (ip,),
+        )
+        return rows[0]["hits"] if rows else 0
+
+    # ── alerts ────────────────────────────────────────────────
+
+    _ALERT_COLS = ("id", "ts", "last_seen", "rule", "key", "severity", "title",
+                   "detail", "ip", "mitre", "hits", "status")
+
+    def save_alert(self, alert: dict) -> None:
+        """Insert or update one alert. Written at once: there are few of them."""
+        row = tuple(
+            ",".join(alert.get(c) or []) if c == "mitre" else alert.get(c, "")
+            for c in self._ALERT_COLS
+        )
+        with self._lock:
+            try:
+                self._conn.execute(
+                    f"INSERT OR REPLACE INTO alerts ({', '.join(self._ALERT_COLS)}) "
+                    f"VALUES ({', '.join('?' * len(self._ALERT_COLS))})", row,
+                )
+                self._conn.commit()
+            except sqlite3.Error as e:
+                self._conn.rollback()
+                logger.error(f"Could not save alert {alert.get('id')}: {e}")
+
+    @staticmethod
+    def _alert(row: sqlite3.Row) -> dict:
+        a = dict(row)
+        a["mitre"] = [t for t in (a.get("mitre") or "").split(",") if t]
+        return a
+
+    def alerts(self, limit: int = 50, severity: Optional[str] = None,
+               status: Optional[str] = None) -> list[dict]:
+        where, params = [], []
+        if severity:
+            where.append("severity = ?")
+            params.append(severity)
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        sql = "SELECT * FROM alerts"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        return [self._alert(r) for r in self._q(sql, (*params, limit))]
+
+    def alerts_for_ip(self, ip: str, limit: int = 10) -> list[dict]:
+        return [self._alert(r) for r in self._q(
+            "SELECT * FROM alerts WHERE ip = ? ORDER BY ts DESC LIMIT ?", (ip, limit))]
+
+    def alert_counts(self) -> dict:
+        """Alerts raised today, by severity."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = self._q(
+            "SELECT severity, count(*) AS n FROM alerts WHERE ts >= ? GROUP BY severity", (today,))
+        counts = {r["severity"]: r["n"] for r in rows}
+        counts["total"] = sum(counts.values())
+        return counts
 
     def ip_counts(self) -> dict:
         r = self._q(

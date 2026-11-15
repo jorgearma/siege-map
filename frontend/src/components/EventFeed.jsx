@@ -155,7 +155,7 @@ export default function EventFeed({ events, onIpClick, activeFilter = 'all' }) {
               )}
               {e.mitre_ttps?.length > 0 && (
                 <span className="event-ttp-inline">
-                  {e.mitre_ttps.filter((t) => t !== 'T1021.004').map((t) => (
+                  {e.mitre_ttps.map((t) => (
                     <MitreBadge key={t} ttp={t} />
                   ))}
                 </span>

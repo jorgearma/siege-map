@@ -3,12 +3,21 @@ from datetime import datetime
 from typing import Optional
 
 
+# Only techniques this sensor can actually observe. sshd never logs the
+# password that was tried, so T1110.004 (credential stuffing) cannot be told
+# apart from guessing and is deliberately absent.
 MITRE_TTPS: dict[str, dict] = {
+    "T1110":     {"name": "Brute Force", "tactic": "Credential Access"},
     "T1110.001": {"name": "Password Guessing", "tactic": "Credential Access"},
     "T1110.003": {"name": "Password Spraying", "tactic": "Credential Access"},
-    "T1110.004": {"name": "Credential Stuffing", "tactic": "Credential Access"},
+    "T1595":     {"name": "Active Scanning", "tactic": "Reconnaissance"},
+    "T1595.002": {"name": "Vulnerability Scanning", "tactic": "Reconnaissance"},
+    "T1190":     {"name": "Exploit Public-Facing Application", "tactic": "Initial Access"},
     "T1078":     {"name": "Valid Accounts", "tactic": "Initial Access"},
-    "T1021.004": {"name": "Remote Services: SSH", "tactic": "Lateral Movement"},
+}
+
+MITRE_URLS: dict[str, str] = {
+    t: "https://attack.mitre.org/techniques/" + t.replace(".", "/") + "/" for t in MITRE_TTPS
 }
 
 
@@ -85,6 +94,9 @@ class AttackerProfile:
     usernames_attempted: list
     geo: Optional[GeoInfo]
     threat_score: int
+    severity: str = "LOW"                      # LOW | MEDIUM | HIGH | CRITICAL
+    score_breakdown: list = field(default_factory=list)  # [{factor, points, max, detail}]
+    auth_attempts: int = 0
     abuse_confidence: int = 0
     abuse_total_reports: int = 0
     abuse_isp: str = ""

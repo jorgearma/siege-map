@@ -72,7 +72,7 @@ def test_json_format():
     e = parse_nginx_line(as_json(uri="/proyectos?x=1", referer="https://github.com/jorge"))
     assert e.event_type == "visit_desktop" and e.username == "/proyectos"
     assert e.meta["lang"] == "es" and e.meta["ref"] == "github"
-    assert e.timestamp == "2026-11-15T10:00:00"
+    assert e.timestamp == "2026-11-15T09:00:00"  # +01:00 → UTC (test TZ)
 
 
 def test_json_browser_without_language_is_fake():

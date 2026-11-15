@@ -1,4 +1,5 @@
 from collections import deque, Counter, OrderedDict
+from datetime import datetime, timedelta
 from typing import Optional
 from .models import SSHEvent
 from .config import settings
@@ -13,7 +14,23 @@ class EventStore:
         self.events: deque[SSHEvent] = deque(maxlen=self.max_events)
         # dedup window: key -> the event that represents it
         self._seen: OrderedDict[str, SSHEvent] = OrderedDict()
+        # ip -> its events still in the deque, oldest first. Per-IP lookups
+        # (profiles, threat-intel gating) no longer scan the whole store.
+        self._by_ip: dict[str, deque[SSHEvent]] = {}
         self._total_count = 0
+
+    def _append(self, event: SSHEvent) -> None:
+        if len(self.events) == self.max_events:
+            # The deque is about to drop its oldest event: drop it from the
+            # index too (it is by construction the oldest one of its IP)
+            old = self.events[0]
+            bucket = self._by_ip.get(old.ip)
+            if bucket:
+                bucket.popleft()
+                if not bucket:
+                    del self._by_ip[old.ip]
+        self.events.append(event)
+        self._by_ip.setdefault(event.ip, deque()).append(event)
 
     def add(self, event: SSHEvent) -> tuple[SSHEvent, bool]:
         """
@@ -34,24 +51,23 @@ class EventStore:
         self._seen[dedup_key] = event
         if len(self._seen) > 5000:
             self._seen.popitem(last=False)
-        self.events.append(event)
+        self._append(event)
         return event, True
 
     def restore(self, events: list[SSHEvent], total: int = 0) -> None:
         """Refill from the database after a restart."""
         for e in events:
-            self.events.append(e)
+            self._append(e)
         self._total_count = max(total, sum(e.count for e in events))
+
+    @staticmethod
+    def _cutoff(seconds: int) -> str:
+        return (datetime.now() - timedelta(seconds=seconds)).isoformat()
 
     def _filter_by_window(self, seconds: Optional[int] = None) -> list[SSHEvent]:
         if seconds is None:
             return list(self.events)
-
-        from datetime import datetime, timedelta
-
-        cutoff = datetime.now() - timedelta(seconds=seconds)
-        cutoff_str = cutoff.isoformat()
-
+        cutoff_str = self._cutoff(seconds)
         return [e for e in self.events if e.timestamp >= cutoff_str]
 
     def recent(self, limit: int = 50, window: Optional[int] = None) -> list[dict]:
@@ -127,7 +143,22 @@ class EventStore:
         return sum(e.count for e in self._filter_by_window(window))
 
     def events_for_ip(self, ip: str, window: Optional[int] = None) -> list[SSHEvent]:
-        return [e for e in self._filter_by_window(window) if e.ip == ip]
+        events = list(self._by_ip.get(ip, ()))
+        if window is None:
+            return events
+        cutoff_str = self._cutoff(window)
+        return [e for e in events if e.timestamp >= cutoff_str]
+
+    def ip_event_count(self, ip: str) -> int:
+        """Stored events for an address, O(1)."""
+        return len(self._by_ip.get(ip, ()))
+
+    def ips(self, window: Optional[int] = None) -> list[str]:
+        if window is None:
+            return list(self._by_ip)
+        cutoff_str = self._cutoff(window)
+        # Each bucket is time-ordered: the last event tells if the IP is in the window
+        return [ip for ip, b in list(self._by_ip.items()) if b and b[-1].timestamp >= cutoff_str]
 
     def events_for_username(self, username: str, window: Optional[int] = None) -> list[SSHEvent]:
         return [e for e in self._filter_by_window(window) if e.username == username]

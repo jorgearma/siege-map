@@ -67,7 +67,7 @@ SSH log → tail_log() → parse_line() → enrich_ip() → EventStore → WebSo
 
 ## Key Design Decisions
 
-- **In-memory only**: No database. Events lost on restart. `deque(maxlen=MAX_EVENTS)` is the store.
+- **Live store in memory, history in SQLite**: `deque(maxlen=MAX_EVENTS)` for the live window; `db.py` keeps daily aggregates, IPs, recent events and alerts.
 - **WS message types**: `config` (VPS coords), `initial` (recent events), `events` (new batch), `ping` (keepalive every 30s).
 - **Window parameter**: REST endpoints accept `window=5m|15m|1h|24h`; translated to seconds in `_parse_window()`.
 - **Geo rate limiting**: ip-api.com free tier is 45 req/min. Repeated IPs are cached in memory for `GEO_CACHE_TTL` seconds (default 24h).
@@ -83,7 +83,7 @@ SSH log → tail_log() → parse_line() → enrich_ip() → EventStore → WebSo
 ## Threat intelligence API (Phase 3)
 
 `backend/app/threat_intel.py` — AbuseIPDB (fire-and-forget en pipeline, cache 24h, max 900/día).
-`backend/app/analyzer.py` — `Analyzer` class con cache de 30s. Clasifica IPs en DICTIONARY_ATTACK, PASSWORD_SPRAYING, SINGLE_PROBE. Genera heatmap 7×24.
+`backend/app/analyzer.py` — `Analyzer` class con cache de 30s. Clasifica IPs por forma del ataque (ver "Detection layer"). Genera heatmap 7×24.
 `backend/app/stix_export.py` — STIX 2.1 JSON construido manualmente (sin librería `stix2`).
 
 New REST endpoints:
@@ -95,6 +95,21 @@ New REST endpoints:
 - `GET /api/export/stix?window=` — bundle STIX 2.1 (descarga JSON)
 - `GET /api/export/csv?window=` — eventos CSV
 - `GET /api/export/report?window=` — resumen ejecutivo JSON
+
+## Detection layer (alerts, campaigns, score)
+
+- `backend/app/analyzer.py` — `classify()` (pattern by shape: accounts × tries) and `score_ip()` (0-100 with breakdown; 85 behaviour + 15 reputation, unknown reputation is neutral). Patterns: PASSWORD_GUESSING, PASSWORD_SPRAYING, DICTIONARY_ATTACK, SSH_SCANNING, WEB_SCANNING, SINGLE_PROBE. Never emit T1110.004 or T1021.004 (not observable from sshd logs).
+- `backend/app/campaigns.py` — `detect(db)`: wordlist groups + distributed spray, each with `confidence`, `level` (LOW/MEDIUM/HIGH), `signals` and `evidence`. HIGH needs two agreeing signals.
+- `backend/app/alerts.py` — `AlertEngine`: one alert per (rule, key), updated while the condition holds, resolved after `ALERT_COOLDOWN`. Volume rules are relative to the sensor's own baseline. `notify.py` sends to Discord/Slack/Telegram/webhook.
+- `backend/app/store.py` — keeps a per-IP index (`_by_ip`); use `events_for_ip`, `ip_event_count`, `ips(window)` instead of scanning `events`.
+- `backend/app/cache.py` — `TTLCache`: use it for any cache keyed by attacker-controlled data.
+- Accepted SSH logins are parsed by `parse_accepted_login()` only, never by `parse_line()`: they must not become events.
+- Timestamps are naive local time of the process; offsets are converted with `to_local_naive()`. Tests pin `TZ=UTC` in `conftest.py`.
+- WS message types now include `alert`. Queue items are whole messages (`{"type", "data"}`).
+- New endpoints: `GET /api/alerts`, `GET /api/export/blocklist`, `GET /api/export/report.md`.
+- Frontend: `components/AlertsPanel.jsx` (panel, header chip, toasts), `hooks/useAlerts.js`, `lib/severity.js` (severity/pattern colours).
+- Tests: `cd backend && python -m pytest -q` (needs `requirements-dev.txt`). `scripts/demo_scenario.py` stages a full attack day for the dev stack.
+- `SECURITY.md` is the threat model of the tool itself; keep it in sync when touching input handling or exports.
 
 ## Planned Expansion (PLAN.md)
 

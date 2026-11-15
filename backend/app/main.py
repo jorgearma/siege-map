@@ -1,7 +1,9 @@
 import asyncio
 import io
+import ipaddress
 import json
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -9,15 +11,20 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
-from .analyzer import analyzer
+from . import campaigns
+from . import narrative
+from . import notify
+from . import report
+from .alerts import AlertEngine
+from .analyzer import analyzer, classify, score_ip
 from .anonymize import mask_ip
 from .config import settings
 from .db import db
 from .geo import close_client, enrich_ip
 from .models import AttackerProfile, GeoInfo
-from .parser import parse_line
+from .parser import parse_accepted_login, parse_line
 from . import intel
 from . import nginx_parser
 from . import stix_export
@@ -47,6 +54,32 @@ _buffer_lock = asyncio.Lock()
 # Keep strong references to background tasks
 _background_tasks: set[asyncio.Task] = set()
 
+alert_engine = AlertEngine(store, analyzer, persist=db.save_alert)
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _broadcast(message: dict) -> None:
+    """Queue one WebSocket message for every connected client."""
+    for q in list(ws_queues.values()):
+        try:
+            q.put_nowait(message)
+        except asyncio.QueueFull:
+            pass
+
+
+def announce(alert: dict) -> None:
+    """Show a new alert on every dashboard and send it to the operator."""
+    public = {k: v for k, v in alert.items() if k != "private"}
+    logger.warning(f"ALERT [{public['severity']}] {public['rule']}: {public['title']}")
+    _broadcast({"type": "alert", "data": public})
+    if notify.enabled():
+        _spawn(notify.send(alert))
+
 
 async def process_log_lines():
     """Main pipeline: tail → parse → enrich → store → buffer → broadcast."""
@@ -64,6 +97,13 @@ async def process_log_lines():
 
         event = parse_line(line)
         if event is None:
+            # A login that worked is never an event (it may be the owner);
+            # it only matters when that address had been failing before
+            accepted = parse_accepted_login(line) if settings.ALERTS_ENABLED else None
+            if accepted and accepted[0] not in settings.ignore_ips:
+                alert = alert_engine.on_accepted_login(*accepted)
+                if alert:
+                    announce(alert)
             continue
 
         if event.ip in settings.ignore_ips:
@@ -86,9 +126,7 @@ async def process_log_lines():
             if is_new:
                 # Fire-and-forget threat intel enrichment
                 if threat_intel.should_check_ip(event.ip):
-                    task = asyncio.create_task(threat_intel.check_abuseipdb(event.ip))
-                    _background_tasks.add(task)
-                    task.add_done_callback(_background_tasks.discard)
+                    _spawn(threat_intel.check_abuseipdb(event.ip))
 
                 # Inline attack classification (uses warm cache only — O(1))
                 event_dict = event.to_dict()
@@ -173,11 +211,7 @@ async def flush_loop():
                 events = _event_buffer.copy()
                 _event_buffer.clear()
 
-            for q in list(ws_queues.values()):
-                try:
-                    q.put_nowait(events)
-                except asyncio.QueueFull:
-                    pass
+            _broadcast({"type": "events", "data": events})
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -194,6 +228,20 @@ async def db_flush_loop():
             raise
         except Exception as e:
             logger.error(f"DB flush loop error: {e}", exc_info=True)
+
+
+async def alert_loop():
+    """Evaluate the alert rules every ALERT_INTERVAL seconds."""
+    while True:
+        await asyncio.sleep(settings.ALERT_INTERVAL)
+        try:
+            found = await asyncio.to_thread(campaigns.detect, db, 50)
+            for alert in alert_engine.evaluate(found):
+                announce(alert)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Alert loop error: {e}", exc_info=True)
 
 
 @asynccontextmanager
@@ -220,6 +268,10 @@ async def lifespan(app: FastAPI):
     ]
     if settings.TOR_EXIT_LIST:
         tasks.append(asyncio.create_task(intel.tor_refresh_loop()))
+    if settings.ALERTS_ENABLED:
+        alert_engine.restore(db.alerts(limit=200, status="active"))
+        tasks.append(asyncio.create_task(alert_loop()))
+        logger.info(f"Alerting on (notifications: {'on' if notify.enabled() else 'dashboard only'})")
     tasks += [asyncio.create_task(process_nginx_lines(p)) for p in settings.nginx_paths]
     for t in tasks:
         _background_tasks.add(t)
@@ -271,8 +323,8 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         while True:
             try:
-                events = await asyncio.wait_for(queue.get(), timeout=30)
-                await ws.send_text(json.dumps({"type": "events", "data": events}))
+                message = await asyncio.wait_for(queue.get(), timeout=30)
+                await ws.send_text(json.dumps(message))
             except asyncio.TimeoutError:
                 try:
                     await ws.send_text(json.dumps({"type": "ping"}))
@@ -351,42 +403,98 @@ async def get_total(window: Optional[str] = _WINDOW_QUERY):
 
 # ── Threat intelligence (new) ──────────────────────────────────
 
+_MASKED_IP = re.compile(r"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.xxx|[0-9a-f:]{1,30}::xxxx)$")
+
+
+def _checked_ip(ip: str) -> str:
+    """
+    The path parameter is public input and ends up in SQL lookups and in the
+    URL of an outbound API call: accept only an IP address (or the truncated
+    form HTTP visitors are stored in), nothing else.
+    """
+    if len(ip) <= 45:
+        if _MASKED_IP.match(ip):
+            return ip
+        try:
+            return str(ipaddress.ip_address(ip))
+        except ValueError:
+            pass
+    raise HTTPException(status_code=400, detail="Not an IP address")
+
+
 @app.get("/api/attacker/{ip}")
 async def get_attacker_profile(ip: str):
+    ip = _checked_ip(ip)
     abuse_data = threat_intel.get_cached_abuse(ip)
+    abuse_conf = abuse_data.get("abuse_confidence") if abuse_data else None
     profile = analyzer.get_attacker_profile(ip, abuse_data=abuse_data or None)
     info = await asyncio.to_thread(db.ip_info, ip)
 
     if not profile and info:
         # Not in the live window any more, but the database remembers it
         users = [u["username"] for u in info["usernames"]]
-        pattern, ttps = analyzer._classify_pattern(set(users), 0.0, info["lines"])
+        is_http = info["source"] == "http"
+        pattern, ttps = classify(info["user_count"], info["attempts"], info["lines"],
+                                 http_lines=info["lines"] if is_http else 0)
         profile = AttackerProfile(
-            ip=ip, total_attempts=info["lines"], unique_usernames=info["user_count"],
+            ip=ip, total_attempts=info["lines"], auth_attempts=info["attempts"],
+            unique_usernames=info["user_count"],
             first_seen=info["first_seen"], last_seen=info["last_seen"],
             attack_pattern=pattern, attack_speed="SLOW_SCAN", requests_per_minute=0.0,
             mitre_ttps=ttps, usernames_attempted=users[:50],
             geo=GeoInfo(country=info["country"] or "Unknown",
                         country_code=info["country_code"] or "XX",
                         org=info["org"] or "", asn=info["org"] or ""),
-            threat_score=analyzer.calc_threat_score(
-                0.0, pattern, info["lines"], (abuse_data or {}).get("abuse_confidence", 0)),
+            threat_score=0,
+            abuse_confidence=abuse_conf or 0,
+            abuse_total_reports=(abuse_data or {}).get("total_reports", 0),
         )
     if not profile:
         raise HTTPException(status_code=404, detail="No data for this IP")
 
     out = profile.to_dict()
+    dual_hits = 0
+    campaign = None
     if info:
+        dual_hits = await asyncio.to_thread(db.has_dual_vector, ip)
         out.update({
             "net_type": info["net_type"] or "", "cloud": info["cloud"] or "",
             "tags": info["tags"], "days_active": info["days_active"],
-            "first_seen_ever": info["first_seen"], "auth_attempts": info["attempts"],
+            "first_seen_ever": info["first_seen"],
+            "auth_attempts": max(info["attempts"], out["auth_attempts"]),
             "campaign": info["fingerprint"] or "", "campaign_size": info["campaign_size"],
             "campaign_usernames": info["fp_users"] or "",
         })
+        if info["fingerprint"]:
+            found = await asyncio.to_thread(campaigns.detect, db, 50)
+            campaign = next((c for c in found if c["fingerprint"] == info["fingerprint"]), None)
+            if campaign:
+                out["campaign_confidence"] = campaign["confidence"]
+                out["campaign_level"] = campaign["level"]
+                out["campaign_label"] = campaign["label"]
     elif profile.geo:
         out["net_type"], out["cloud"] = profile.geo.net_type, profile.geo.cloud
-    if "xxx" not in ip:
+
+    # Score again with what only the database knows: persistence and SSH+HTTP
+    scored = score_ip(
+        volume=out["auth_attempts"] or out["total_attempts"],
+        rpm=out["requests_per_minute"],
+        breadth=out["unique_usernames"] or len(out["http_routes"]),
+        days_active=(info or {}).get("days_active", 1) or 1,
+        exploit="T1190" in out["mitre_ttps"],
+        multi_vector=bool(dual_hits) or bool(out["unique_usernames"] and out["http_routes"]),
+        abuse_confidence=abuse_conf,
+    )
+    out.update(threat_score=scored["score"], severity=scored["severity"],
+               score_breakdown=scored["breakdown"])
+
+    alerts = await asyncio.to_thread(db.alerts_for_ip, ip)
+    out["alerts"] = alerts
+    out["narrative"] = narrative.build(out, info, campaign, alerts, dual_hits)
+
+    # GreyNoise: only for a full IPv4 address this sensor has really seen,
+    # so the endpoint cannot be used to burn the daily quota with made-up IPs
+    if "xxx" not in ip and ipaddress.ip_address(ip).version == 4:
         gn = await intel.check_greynoise(ip)
         if gn:
             out["greynoise"] = gn
@@ -405,6 +513,11 @@ async def get_attackers(
 @app.get("/api/stats/patterns")
 async def get_attack_patterns(window: Optional[str] = _WINDOW_QUERY):
     return {"patterns": analyzer.get_attack_pattern_summary(window=_parse_window(window))}
+
+
+@app.get("/api/stats/mitre")
+async def get_mitre(window: Optional[str] = _WINDOW_QUERY):
+    return {"techniques": analyzer.get_mitre_summary(window=_parse_window(window))}
 
 
 @app.get("/api/stats/asns")
@@ -510,10 +623,28 @@ def intel_ssh(range: str = _RANGE_QUERY, limit: int = Query(25, ge=1, le=200)):
 
 @app.get("/api/intel/campaigns")
 def intel_campaigns(limit: int = Query(15, ge=1, le=100)):
-    """Addresses that try the same usernames in the same order: one botnet."""
+    """Groups of addresses acting together, each with a confidence level."""
     return {
         "prefix_len": settings.CAMPAIGN_PREFIX_LEN,
-        "campaigns": db.campaigns(limit=limit),
+        "campaigns": campaigns.detect(db, limit=limit),
+    }
+
+
+# ── Alerts ─────────────────────────────────────────────────────
+
+@app.get("/api/alerts")
+def get_alerts(
+    limit: int = Query(50, ge=1, le=200),
+    severity: Optional[str] = Query(None, pattern="^(LOW|MEDIUM|HIGH|CRITICAL)$"),
+):
+    """Alerts raised right now, the recent history and today's counters."""
+    return {
+        "enabled": settings.ALERTS_ENABLED,
+        "notifications": notify.enabled(),
+        "active": [a for a in alert_engine.active_alerts()
+                   if not severity or a["severity"] == severity],
+        "history": db.alerts(limit=limit, severity=severity),
+        "today": db.alert_counts(),
     }
 
 
@@ -635,6 +766,30 @@ async def export_csv(window: Optional[str] = _WINDOW_QUERY):
     )
 
 
+@app.get("/api/export/blocklist")
+def export_blocklist(
+    days: int = Query(7, ge=1, le=90),
+    min_attempts: int = Query(10, ge=1, le=100000),
+    format: str = Query("txt", pattern="^(txt|nft)$"),
+):
+    """SSH addresses with repeated failed logins, ready for a firewall."""
+    rows = db.blocklist(days=days, min_attempts=min_attempts)
+    return PlainTextResponse(
+        stix_export.build_blocklist(rows, format),
+        headers={"Content-Disposition": "attachment; filename=siege_blocklist.txt"},
+    )
+
+
+@app.get("/api/export/report.md")
+def export_report_markdown(range: str = Query("30d", pattern="^(today|7d|30d|all)$")):
+    """Executive report from the long-term database, as Markdown."""
+    return PlainTextResponse(
+        report.build_markdown(db, _parse_range(range)),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=threat_report.md"},
+    )
+
+
 @app.get("/api/export/report")
 async def export_report(window: Optional[str] = _WINDOW_QUERY):
     return stix_export.build_report(window=_parse_window(window))
@@ -649,6 +804,7 @@ async def health():
         "events_stored": len(store.events),
         "total_processed": store._total_count,
         "ws_clients": len(ws_queues),
+        "alerts_active": len(alert_engine.active),
         "threat_intel_enabled": settings.THREAT_INTEL_ENABLED,
         "db": db.stats(),
         "geo_provider": settings.GEO_PROVIDER,

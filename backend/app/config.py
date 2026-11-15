@@ -49,6 +49,33 @@ class Settings:
     OWN_DOMAINS: str = os.getenv("OWN_DOMAINS", "")
     # Usernames tried in order that identify a wordlist (campaign fingerprint)
     CAMPAIGN_PREFIX_LEN: int = int(os.getenv("CAMPAIGN_PREFIX_LEN", "4"))
+    # ── Alerting (alerts.py) ──────────────────────────────────
+    ALERTS_ENABLED: bool = os.getenv("ALERTS_ENABLED", "true").lower() == "true"
+    # Seconds between rule evaluations
+    ALERT_INTERVAL: float = float(os.getenv("ALERT_INTERVAL", "30"))
+    # An alert is resolved after its condition has been absent this long;
+    # only then can the same subject alert again
+    ALERT_COOLDOWN: float = float(os.getenv("ALERT_COOLDOWN", "600"))
+    ALERT_SCORE_THRESHOLD: int = int(os.getenv("ALERT_SCORE_THRESHOLD", "75"))
+    # Minimum events in 5 minutes for a burst (it must ALSO exceed mean + 3σ)
+    ALERT_BURST_MIN: int = int(os.getenv("ALERT_BURST_MIN", "100"))
+    # Distinct SSH addresses from one country in 10 minutes (and 3x its usual)
+    ALERT_COUNTRY_IPS: int = int(os.getenv("ALERT_COUNTRY_IPS", "15"))
+    # Distinct accounts tried by one address in 10 minutes
+    ALERT_SPRAY_USERS: int = int(os.getenv("ALERT_SPRAY_USERS", "40"))
+    ALERT_CAMPAIGN_MIN_IPS: int = int(os.getenv("ALERT_CAMPAIGN_MIN_IPS", "3"))
+    # Failed attempts an address needs before its accepted login is an alert
+    ALERT_LOGIN_MIN_FAILS: int = int(os.getenv("ALERT_LOGIN_MIN_FAILS", "3"))
+    ALERT_EXPLOIT_2XX: bool = os.getenv("ALERT_EXPLOIT_2XX", "true").lower() == "true"
+    ALERT_RETENTION_DAYS: int = int(os.getenv("ALERT_RETENTION_DAYS", "90"))
+    # Where to send them. Discord and Slack webhook URLs are recognised and
+    # get their own format; anything else receives the alert as JSON.
+    ALERT_WEBHOOK_URL: str = os.getenv("ALERT_WEBHOOK_URL", "")
+    ALERT_TELEGRAM_BOT_TOKEN: str = os.getenv("ALERT_TELEGRAM_BOT_TOKEN", "")
+    ALERT_TELEGRAM_CHAT_ID: str = os.getenv("ALERT_TELEGRAM_CHAT_ID", "")
+    # LOW | MEDIUM | HIGH | CRITICAL: the least severe alert worth a message
+    ALERT_NOTIFY_MIN_SEVERITY: str = os.getenv("ALERT_NOTIFY_MIN_SEVERITY", "HIGH").upper()
+
     # Public link shown on the landing screen
     REPO_URL: str = os.getenv("REPO_URL", "https://github.com/jorgearma/siege-map")
 
