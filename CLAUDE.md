@@ -107,6 +107,8 @@ New REST endpoints:
 - Timestamps are naive local time of the process; offsets are converted with `to_local_naive()`. Tests pin `TZ=UTC` in `conftest.py`.
 - WS message types now include `alert`. Queue items are whole messages (`{"type", "data"}`).
 - New endpoints: `GET /api/alerts`, `GET /api/export/blocklist`, `GET /api/export/report.md`.
+- `GET /api/stats/hud` feeds `components/GlobeHud.jsx`: corner read-outs over the globe only (sensor uptime, VPS clock + day/night, today's records). Computed from the live store since local midnight.
+- `components/GlobeTrace.jsx`: hover read-out docked on the right of the globe (replaces the tooltip). Scene data plus a debounced, cached `GET /api/attacker/{ip}`; `Globe.jsx` draws the lock brackets and the leader line up to it.
 - Frontend: `components/AlertsPanel.jsx` (panel, header chip, toasts), `hooks/useAlerts.js`, `lib/severity.js` (severity/pattern colours).
 - Tests: `cd backend && python -m pytest -q` (needs `requirements-dev.txt`). `scripts/demo_scenario.py` stages a full attack day for the dev stack.
 - `SECURITY.md` is the threat model of the tool itself; keep it in sync when touching input handling or exports.

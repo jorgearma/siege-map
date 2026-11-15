@@ -200,6 +200,7 @@ export default function App() {
                 initialIds={replay.active ? EMPTY_IDS : initialIds}
                 config={config}
                 onIpClick={handleIpClick}
+                replaying={replay.active}
               />
             ) : (
               <Suspense fallback={<div className="intel-empty">LOADING MAP…</div>}>

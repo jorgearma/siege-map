@@ -3,9 +3,11 @@ import io
 import ipaddress
 import json
 import logging
+import math
 import re
 import time
 import uuid
+from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
@@ -741,6 +743,75 @@ def get_summary():
     }
     _summary_cache = (summary, time.time())
     return summary
+
+
+_STARTED_AT = time.time()
+_hud_cache: tuple[dict, float] = ({}, 0.0)
+
+
+def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance (haversine)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2)
+    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(a)))
+
+
+@app.get("/api/stats/hud")
+def get_hud():
+    """
+    Corner read-outs of the globe: sensor clock/uptime and today's records.
+    Computed over the live store since local midnight (cached 15s), so on a
+    very busy day it covers the last MAX_EVENTS events only.
+    """
+    global _hud_cache
+    cached, at = _hud_cache
+    if cached and time.time() - at < 15:
+        return {**cached, "uptime_seconds": int(time.time() - _STARTED_AT)}
+
+    now = datetime.now()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    events = store._filter_by_window(int((now - midnight).total_seconds()) + 1)
+
+    per_ip: Counter = Counter()
+    per_minute: Counter = Counter()
+    farthest, farthest_km = None, -1.0
+    for e in events:
+        per_ip[e.ip] += e.count
+        per_minute[e.timestamp[:16]] += e.count
+        g = e.geo
+        if g and g.country_code != "XX" and (g.lat or g.lon):
+            km = _distance_km(settings.VPS_LAT, settings.VPS_LON, g.lat, g.lon)
+            if km > farthest_km:
+                farthest, farthest_km = e, km
+
+    records: dict = {"farthest": None, "top_ip": None, "busiest_minute": None}
+    if farthest:
+        records["farthest"] = {
+            "ip": farthest.ip,
+            "city": farthest.geo.city,
+            "country": farthest.geo.country,
+            "country_code": farthest.geo.country_code,
+            "km": round(farthest_km),
+        }
+    if per_ip:
+        ip, count = per_ip.most_common(1)[0]
+        geo = next((e.geo for e in store.events_for_ip(ip) if e.geo), None)
+        records["top_ip"] = {"ip": ip, "count": count, "country_code": geo.country_code if geo else ""}
+    if per_minute:
+        minute, count = per_minute.most_common(1)[0]
+        records["busiest_minute"] = {"minute": minute[11:16], "count": count}
+
+    local = now.astimezone()
+    hud = {
+        "sensor": settings.VPS_LABEL,
+        "tz": local.tzname() or "",
+        "utc_offset_min": int(local.utcoffset().total_seconds() // 60),
+        "today": {"events": sum(per_ip.values()), "unique_ips": len(per_ip)},
+        "records": records,
+    }
+    _hud_cache = (hud, time.time())
+    return {**hud, "uptime_seconds": int(time.time() - _STARTED_AT)}
 
 
 # ── Export endpoints ───────────────────────────────────────────

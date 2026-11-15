@@ -139,3 +139,27 @@ def test_mitre_summary_counts_addresses_per_technique(client):
     assert by_id["T1110.001"]["count"] == 1 and by_id["T1110.003"]["count"] == 1
     assert by_id["T1110.003"]["name"] == "Password Spraying"
     assert all(t["tactic"] for t in body)
+
+
+def test_hud_reports_todays_records(client):
+    main._hud_cache = ({}, 0.0)
+    for _ in range(3):
+        event(ip="8.8.4.4")
+    event(ip="8.8.8.8")
+    body = client.get("/api/stats/hud").json()
+    assert body["today"] == {"events": 4, "unique_ips": 2}
+    assert body["records"]["top_ip"] == {"ip": "8.8.4.4", "count": 3, "country_code": "DE"}
+    far = body["records"]["farthest"]
+    assert far["country_code"] == "DE" and far["km"] == round(
+        main._distance_km(main.settings.VPS_LAT, main.settings.VPS_LON, GEO.lat, GEO.lon))
+    assert body["records"]["busiest_minute"]["count"] == 4
+    assert body["utc_offset_min"] == 0 and body["uptime_seconds"] >= 0
+    main._hud_cache = ({}, 0.0)
+
+
+def test_hud_is_empty_without_events(client):
+    main._hud_cache = ({}, 0.0)
+    body = client.get("/api/stats/hud").json()
+    assert body["today"] == {"events": 0, "unique_ips": 0}
+    assert body["records"] == {"farthest": None, "top_ip": None, "busiest_minute": None}
+    main._hud_cache = ({}, 0.0)

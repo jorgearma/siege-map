@@ -3187,31 +3187,153 @@ body {
   touch-action: none;
 }
 .globe-canvas:active { cursor: grabbing; }
-.globe-tip {
+/* Hover read-out: docked on the right, tied to the tower by a leader line
+   that the canvas draws up to this panel's top-left corner */
+.globe-trace {
+  --trace: var(--green);
   position: absolute;
-  transform: translate(14px, -50%);
+  right: 12px;
+  top: max(50%, 280px);
+  transform: translateY(-50%);
+  width: 236px;
   z-index: 550;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  background: rgba(8, 14, 10, 0.96);
-  border: 1px solid var(--border-active);
-  font-family: var(--font-terminal);
-  font-size: 12px;
-  color: var(--ink-2);
   pointer-events: none;
+  visibility: hidden;
+  font-family: var(--font-terminal);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.globe-trace.is-on { visibility: visible; }
+.trace-inner {
+  position: relative;
+  padding: 0 12px 9px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 255, 65, 0.025) 2px 3px),
+    rgba(4, 10, 6, 0.9);
+  border: 1px solid color-mix(in srgb, var(--trace) 35%, transparent);
+  border-left: 2px solid var(--trace);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--trace) 18%, transparent), inset 0 0 24px rgba(0, 0, 0, 0.6);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+  animation: trace-in 0.22s steps(7) both;
+  overflow: hidden;
+}
+/* a scan bar runs down the card once as it resolves */
+.trace-inner::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 28px;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--trace) 22%, transparent));
+  animation: trace-scan 0.5s ease-out both;
+  pointer-events: none;
+}
+@keyframes trace-in {
+  from { clip-path: polygon(0 0, 100% 0, 100% 0, 100% 0, 0 0); opacity: 0.4; }
+  to { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%); opacity: 1; }
+}
+@keyframes trace-scan {
+  from { transform: translateY(-28px); opacity: 1; }
+  to { transform: translateY(320px); opacity: 0; }
+}
+.trace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0 -12px 8px;
+  padding: 5px 12px;
+  background: color-mix(in srgb, var(--trace) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--trace) 35%, transparent);
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.trace-lock { color: var(--trace); text-shadow: 0 0 6px var(--trace); }
+.trace-lock::before { content: '◉ '; animation: trace-blink 1s steps(2) infinite; }
+@keyframes trace-blink { 50% { opacity: 0.25; } }
+.trace-kind { color: var(--ink); }
+.trace-ip {
+  font-family: var(--font-data);
+  font-size: 17px;
+  line-height: 1.2;
+  color: var(--ink);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--trace) 60%, transparent);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.trace-place { margin-top: 3px; color: var(--ink); }
+.trace-org {
+  color: var(--ink-3);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trace-rule {
+  height: 1px;
+  margin: 8px 0 6px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--trace) 55%, transparent), transparent);
+}
+.trace-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  line-height: 1.6;
   white-space: nowrap;
 }
-.globe-tip-kind { display: flex; align-items: center; gap: 6px; color: var(--ink); }
-.globe-tip-kind i,
+.trace-key { color: var(--ink-3); font-size: 10px; letter-spacing: 1px; }
+.trace-val { color: var(--ink); font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.trace-live { color: var(--trace); text-shadow: 0 0 6px var(--trace); }
+.trace-quiet { color: var(--ink-3); }
+.trace-wait { color: var(--ink-3); letter-spacing: 2px; font-size: 10px; }
+.trace-wait::after { content: '▮'; margin-left: 4px; animation: trace-blink 0.6s steps(2) infinite; }
+.trace-none { color: var(--ink-3); letter-spacing: 1px; font-size: 10px; }
+.trace-score { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.trace-bar { display: flex; gap: 2px; flex: 1; }
+.trace-bar i { flex: 1; height: 8px; background: rgba(255, 255, 255, 0.07); }
+.trace-bar i.on { background: var(--score); box-shadow: 0 0 5px var(--score); }
+.trace-score-num {
+  min-width: 22px;
+  text-align: right;
+  font-family: var(--font-data);
+  font-size: 13px;
+  color: var(--score);
+}
+.trace-ttps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.trace-ttps span {
+  padding: 1px 5px;
+  border: 1px solid var(--border-active);
+  font-family: var(--font-data);
+  font-size: 10px;
+  color: var(--ink);
+}
+.trace-foot {
+  margin-top: 9px;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--ink-3);
+}
+/* Not enough room beside the sphere: dock it under the globe instead */
+@container (max-width: 760px) {
+  .globe-trace {
+    right: 50%;
+    top: auto;
+    bottom: 30px;
+    transform: translateX(50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trace-inner, .trace-inner::after, .trace-lock::before, .trace-wait::after { animation: none; }
+  .trace-inner::after { display: none; }
+}
 .globe-legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.globe-tip-ip { color: var(--ink); font-family: var(--font-data); }
-.globe-tip-count { color: var(--ink); }
 .globe-legend {
   position: absolute;
-  left: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 10px;
+  white-space: nowrap;
   z-index: 540;
   display: flex;
   gap: 12px;
@@ -3230,6 +3352,78 @@ body {
   font-size: 10px;
   letter-spacing: 1px;
   color: var(--text-muted);
+}
+
+/* ── Globe corner read-outs ── */
+.globe-wrap { container-type: inline-size; }
+.globe-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 540;
+  pointer-events: none;
+  font-family: var(--font-terminal);
+}
+.hud-block {
+  position: absolute;
+  min-width: 168px;
+  padding: 7px 10px 8px;
+  background: rgba(4, 10, 6, 0.55);
+  /* Corner brackets instead of a closed box */
+  --hud-edge: var(--border-active);
+  background-image:
+    linear-gradient(var(--hud-edge), var(--hud-edge)), linear-gradient(var(--hud-edge), var(--hud-edge)),
+    linear-gradient(var(--hud-edge), var(--hud-edge)), linear-gradient(var(--hud-edge), var(--hud-edge)),
+    linear-gradient(var(--hud-edge), var(--hud-edge)), linear-gradient(var(--hud-edge), var(--hud-edge)),
+    linear-gradient(var(--hud-edge), var(--hud-edge)), linear-gradient(var(--hud-edge), var(--hud-edge));
+  background-repeat: no-repeat;
+  background-size: 9px 1px, 1px 9px, 9px 1px, 1px 9px, 9px 1px, 1px 9px, 9px 1px, 1px 9px;
+  background-position:
+    top left, top left, top right, top right,
+    bottom left, bottom left, bottom right, bottom right;
+  background-color: rgba(4, 10, 6, 0.55);
+}
+.hud-block--tl { top: 38px; left: 12px; }
+.hud-block--tr { top: 42px; right: 12px; }
+.hud-block--bl { bottom: 12px; left: 12px; }
+.hud-title {
+  margin-bottom: 5px;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--green);
+  text-shadow: var(--glow-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+.hud-key { color: var(--ink-3); letter-spacing: 1px; font-size: 10px; }
+.hud-val { color: var(--ink); font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.hud-ip {
+  pointer-events: auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted var(--ink-3);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.hud-ip:hover { color: var(--green); border-bottom-color: var(--green); }
+.hud-phase--day { color: var(--amber); }
+.hud-phase--twilight { color: var(--cyan); }
+.hud-phase--night { color: var(--ink-2); }
+/* Not enough room around the sphere: the globe comes first */
+@container (max-width: 760px) {
+  .globe-hud { display: none; }
 }
 
 /* ── Replay HUD ── */
