@@ -1,0 +1,8 @@
+# Lista blanca: se ignora todo y solo entra lo que necesita el build
+*
+!package.json
+!package-lock.json
+!index.html
+!vite.config.js
+!src/
+!nginx.conf
