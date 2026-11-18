@@ -1,0 +1,6 @@
+# Lista blanca: se ignora todo y solo entra lo que necesita el build
+*
+!requirements.txt
+!app/
+**/__pycache__
+**/*.pyc
