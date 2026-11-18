@@ -1,6 +1,10 @@
 services:
   backend:
     build: ./backend
+    # Etiqueta = commit desplegado (OWASP #13): se sabe qué build corre y se puede volver atrás.
+    #   TAG=$(git rev-parse --short HEAD) docker compose up -d --build
+    # Sin TAG queda en "latest" a propósito: el verificador avisa de que falta la versión.
+    image: siege-map-backend:${TAG:-latest}
     container_name: ssh-rain-backend
     restart: unless-stopped
     env_file: .env
@@ -46,6 +50,7 @@ services:
       retries: 3
 
   frontend:
+    image: siege-map-frontend:${TAG:-latest}
     build:
       context: ./frontend
       args:

@@ -406,6 +406,20 @@ docker compose restart backend
 docker compose up -d --build
 ```
 
+**Actualizar y volver atrás (imágenes etiquetadas con el commit):**
+```bash
+git pull
+TAG=$(git rev-parse --short HEAD) docker compose up -d --build   # siege-map-*:<commit>
+
+docker image ls 'siege-map-*'                                    # versiones disponibles
+T=<commit-anterior>                                              # rollback, sin reconstruir:
+docker image inspect siege-map-backend:$T siege-map-frontend:$T >/dev/null && TAG=$T docker compose up -d
+# OJO: sin el "docker image inspect", un TAG que no existe NO da error: compose construye
+# el código actual y le pone esa etiqueta (comprobado; pull_policy: never tampoco lo evita)
+
+docker image rm siege-map-backend:<commit> siege-map-frontend:<commit>   # borrar versiones viejas
+```
+
 **No veo eventos:**
 1. ¿El contenedor lee el log? `docker compose exec backend cat $SSH_LOG_PATH | head` (deberia funcionar).
 2. ¿Hay actividad real? Genera con `python scripts/fake_ssh_log.py --output ./logs/auth.log --rate 2.0` en modo dev.

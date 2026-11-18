@@ -149,7 +149,11 @@ deploy_app() {
         COMPOSE_CMD="docker-compose"
     fi
 
+    # Images tagged with the git commit: you know what is running and can roll back
+    TAG=$(git rev-parse --short HEAD 2>/dev/null || echo latest)
+    export TAG
     $COMPOSE_CMD up -d --build
+    print_success "Images tagged as :$TAG"
 
     print_success "SSH Bot Rain Map is now running!"
     echo ""
