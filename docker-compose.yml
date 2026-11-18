@@ -17,6 +17,8 @@ services:
     read_only: true
     tmpfs: [/tmp]
     mem_limit: 256m
+    # CPU: sin límite, un bucle o un pico de ataques se come la CPU de todo el VPS (OWASP #7)
+    cpus: "1.0"
     pids_limit: 100
     logging:
       driver: json-file
@@ -57,6 +59,7 @@ services:
     read_only: true
     tmpfs: [/tmp]   # nginx-unprivileged keeps pid + cache in /tmp
     mem_limit: 64m
+    cpus: "0.5"
     pids_limit: 100
     logging:
       driver: json-file
@@ -67,8 +70,16 @@ services:
       # Docker bypasses ufw: bind to localhost by default.
       # A reverse proxy / Cloudflare Tunnel publishes it (BIND_ADDR=0.0.0.0 to expose directly).
       - "${BIND_ADDR:-127.0.0.1}:${FRONTEND_PORT:-8082}:3000"
+    # 127.0.0.1 y no localhost: en Alpine localhost → ::1 y nginx solo escucha IPv4.
+    # Pide "/" (estático), no /api: si cae el backend, el frontend no debe salir unhealthy.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy   # no arranca hasta que el backend responde /api/health
 
 volumes:
   siege-data:
