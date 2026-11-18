@@ -50,6 +50,10 @@ COPY app/ ./app/
 # con nombre hereda este dueño la primera vez que se crea, así que el
 # usuario app puede escribir sin ser root ni tocar permisos en el host.
 RUN mkdir -p /data /geoip && chown app:app /data
+
+# SUID/SGID (su, passwd, mount, chage...) vienen de Debian y la app no los usa.
+# no-new-privileges del compose ya los anula; quitarlos aquí no deja todo en esa sola línea.
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
 VOLUME /data
 USER 10001
 
