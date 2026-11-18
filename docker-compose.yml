@@ -12,6 +12,10 @@ services:
       # Same time zone as the host: classic syslog lines ("Apr 13 19:18:25")
       # carry no offset, so the container must read them with the host's clock
       - TZ=${TZ:-UTC}
+    # Claves como Docker secrets (OWASP #12) → /run/secrets/<nombre>; config.py las lee de ahí.
+    # En environment:/.env se verían con docker inspect. Crear el fichero ANTES del up (si falta, compose no arranca).
+    secrets:
+      - abuseipdb_api_key
     # Hardening: non-root user (Dockerfile) + only what it needs to read logs
     user: "10001"
     group_add:
@@ -88,3 +92,7 @@ services:
 
 volumes:
   siege-data:
+
+secrets:
+  abuseipdb_api_key:
+    file: ./secrets/abuseipdb_api_key.txt   # dir 700, fichero 444, fuera de git

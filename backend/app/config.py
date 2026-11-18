@@ -2,13 +2,27 @@ import os
 from pathlib import Path
 
 
+def _secret(name: str, default: str = "") -> str:
+    """Docker secret (/run/secrets/<name en minúsculas>) y, si no existe, la variable de entorno.
+
+    En producción las claves van como Docker secrets (OWASP #12): en environment:
+    se verían con docker inspect y en /proc/1/environ. La variable queda como
+    respaldo para el modo dev y el backend en local.
+    """
+    path = Path("/run/secrets") / name.lower()
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return os.getenv(name, default)
+
+
 class Settings:
     SSH_LOG_PATH: str = os.getenv("SSH_LOG_PATH", "/var/log/auth.log")
     VPS_LAT: float = float(os.getenv("VPS_LAT", "40.4168"))
     VPS_LON: float = float(os.getenv("VPS_LON", "-3.7038"))
     VPS_LABEL: str = os.getenv("VPS_LABEL", "My VPS")
     GEO_PROVIDER: str = os.getenv("GEO_PROVIDER", "ip-api")
-    IPINFO_TOKEN: str = os.getenv("IPINFO_TOKEN", "")
+    IPINFO_TOKEN: str = _secret("IPINFO_TOKEN")
     BACKEND_HOST: str = os.getenv("BACKEND_HOST", "0.0.0.0")
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
     MAX_EVENTS: int = int(os.getenv("MAX_EVENTS", "10000"))
@@ -21,8 +35,8 @@ class Settings:
     MASK_HTTP_IPS: bool = os.getenv("MASK_HTTP_IPS", "true").lower() == "true"
     # IPs propias que nunca deben aparecer (ej. la de casa). Separadas por coma.
     IGNORE_IPS: str = os.getenv("IGNORE_IPS", "")
-    ABUSEIPDB_API_KEY: str = os.getenv("ABUSEIPDB_API_KEY", "")
-    SHODAN_API_KEY: str = os.getenv("SHODAN_API_KEY", "")
+    ABUSEIPDB_API_KEY: str = _secret("ABUSEIPDB_API_KEY")
+    SHODAN_API_KEY: str = _secret("SHODAN_API_KEY")
     ABUSE_CACHE_TTL: int = int(os.getenv("ABUSE_CACHE_TTL", "86400"))
 
     # ── Persistence (SQLite) ──────────────────────────────────
@@ -43,7 +57,7 @@ class Settings:
     # Download the public Tor exit-node list once a day
     TOR_EXIT_LIST: bool = os.getenv("TOR_EXIT_LIST", "true").lower() == "true"
     # GreyNoise community API (optional, only queried when a dossier is opened)
-    GREYNOISE_API_KEY: str = os.getenv("GREYNOISE_API_KEY", "")
+    GREYNOISE_API_KEY: str = _secret("GREYNOISE_API_KEY")
     GREYNOISE_DAILY_LIMIT: int = int(os.getenv("GREYNOISE_DAILY_LIMIT", "40"))
     # Your own hostnames: referrers from them count as "internal"
     OWN_DOMAINS: str = os.getenv("OWN_DOMAINS", "")
@@ -70,8 +84,8 @@ class Settings:
     ALERT_RETENTION_DAYS: int = int(os.getenv("ALERT_RETENTION_DAYS", "90"))
     # Where to send them. Discord and Slack webhook URLs are recognised and
     # get their own format; anything else receives the alert as JSON.
-    ALERT_WEBHOOK_URL: str = os.getenv("ALERT_WEBHOOK_URL", "")
-    ALERT_TELEGRAM_BOT_TOKEN: str = os.getenv("ALERT_TELEGRAM_BOT_TOKEN", "")
+    ALERT_WEBHOOK_URL: str = _secret("ALERT_WEBHOOK_URL")
+    ALERT_TELEGRAM_BOT_TOKEN: str = _secret("ALERT_TELEGRAM_BOT_TOKEN")
     ALERT_TELEGRAM_CHAT_ID: str = os.getenv("ALERT_TELEGRAM_CHAT_ID", "")
     # LOW | MEDIUM | HIGH | CRITICAL: the least severe alert worth a message
     ALERT_NOTIFY_MIN_SEVERITY: str = os.getenv("ALERT_NOTIFY_MIN_SEVERITY", "HIGH").upper()

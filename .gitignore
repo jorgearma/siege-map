@@ -18,3 +18,4 @@ geoip/
 *.db-wal
 *.db-shm
 .pytest_cache/
+secrets/
