@@ -1,0 +1,81 @@
+# Cloudflare Tunnel en contenedor (opcional). Se suma a docker-compose.yml:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.tunnel.yml   ← en .env
+#
+#   Internet → Cloudflare → túnel de ESTE proyecto → cloudflared (uid 65532)
+#                                                      │ red internal (internal: true)
+#                                                      ▼ http://frontend:3000
+#                                                    frontend · sin ports · sin salida
+#                                                      │ /api, /ws
+#                                                      ▼ http://backend:8000
+#                                                    backend · internal + egress
+#
+# Sin este fichero todo sigue igual: frontend en 127.0.0.1:8082 para un reverse
+# proxy o un cloudflared del host. Pasos: README → "Cloudflare Tunnel en contenedor".
+
+services:
+  frontend:
+    # Sin puerto en el host: solo lo alcanza cloudflared por la red interna (OWASP #5a)
+    ports: !reset []
+    # Solo internal: sin salida a Internet. Si alguien ejecuta código en nginx,
+    # no puede descargar herramientas ni abrir una reverse shell (OWASP #5)
+    networks: [internal]
+
+  backend:
+    # internal: lo alcanza el frontend. egress: ip-api, AbuseIPDB, lista de Tor.
+    networks: [internal, egress]
+
+  cloudflared:
+    # OWASP #13: versión + digest. Actualizar: docker pull + docker inspect RepoDigests
+    image: cloudflare/cloudflared:2026.11.0@sha256:b94b96edf2c9c4360f8879c8580cfaa99077f19c849ec595ca2f711b27d4f344
+    container_name: ssh-rain-tunnel
+    restart: unless-stopped
+    # La imagen ya corre como 65532:65532 (distroless, sin shell).
+    # --token-file + secret: el token NO va en environment ni en la línea de
+    # comandos (se vería en docker inspect / ps). OWASP #12.
+    # --metrics 127.0.0.1: por defecto escucha en 0.0.0.0 y el frontend podría consultarlo.
+    command: >-
+      tunnel --no-autoupdate --metrics 127.0.0.1:20241
+      run --token-file /run/secrets/tunnel_token
+    secrets: [tunnel_token]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpus: "0.5"
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - internal                     # llegar a http://frontend:3000
+      - egress                       # salir hacia Cloudflare
+    healthcheck:
+      # Sin shell ni wget en la imagen: el propio binario consulta /ready
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:20241", "ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      frontend:
+        condition: service_healthy
+
+networks:
+  internal:
+    name: siege-map_internal
+    internal: true                   # sin salida a Internet
+    ipam:
+      config:
+        # Fija y dentro de 172.16.0.0/12: frontend/nginx.conf solo se fía de
+        # CF-Connecting-IP desde ese rango (set_real_ip_from).
+        - subnet: 172.30.82.0/24
+  egress:
+    name: siege-map_egress
+    driver: bridge
+
+secrets:
+  tunnel_token:
+    # secrets/ con 700, fichero con 444 (lo lee el uid 65532), sin salto de línea final
+    file: ./secrets/tunnel_token

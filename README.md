@@ -279,6 +279,28 @@ En la imagen oficial `nginx` el `access.log` es un symlink a `/dev/stdout`: los 
 
 Si el backend no puede **leer** el log al arrancar (permisos), esa ingesta se para hasta reiniciar el backend: `docker logs ssh-rain-backend | grep -i permission`.
 
+### 2c. Cloudflare Tunnel en contenedor (opcional)
+[`docker-compose.tunnel.yml`](docker-compose.tunnel.yml) añade un `cloudflared` propio del proyecto. Frente a un cloudflared instalado en el host: no corre como root, el frontend **no publica puerto** y **no tiene salida a Internet** (solo el backend y el túnel la tienen).
+
+```bash
+# 1. Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared.
+#    Copiar SOLO el token (empieza por eyJ). No ejecutar el comando del panel.
+
+# 2. Guardar el token sin que se vea ni quede en el historial
+mkdir -p -m 700 secrets
+read -rs -p "Token: " T; echo; printf '%s' "$T" > secrets/tunnel_token; unset T
+chmod 444 secrets/tunnel_token
+
+# 3. Activar el override (en .env) y levantar
+echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.tunnel.yml' >> .env
+docker compose up -d --build
+docker compose logs cloudflared | grep 'Registered tunnel connection'
+
+# 4. Panel → rutas del túnel → http://frontend:3000
+```
+
+La red `internal` usa la subred `172.30.82.0/24`: si choca con otra red del host (`Pool overlaps`), cámbiala en el override. Tiene que seguir dentro de `172.16.0.0/12` para que `set_real_ip_from` de `frontend/nginx.conf` acepte la IP real.
+
 ### 3. Coordenadas del VPS
 Si no sabes la lat/lon de tu servidor, usa `curl ifconfig.co/json` desde el VPS o consulta el panel de tu proveedor (Hetzner, DigitalOcean, OVH, etc).
 
